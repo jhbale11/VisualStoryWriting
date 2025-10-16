@@ -4,6 +4,8 @@ import { RouterProvider, createHashRouter } from 'react-router-dom';
 import BaselineInterface from './study/BaselineInterface';
 import StudyInterface from './study/StudyInterface';
 import { useStudyStore } from './study/StudyModel';
+import GlossaryUploader from './view/GlossaryUploader';
+import GlossaryViewer from './view/GlossaryViewer';
 import Launcher from './view/Launcher';
 import VisualWritingInterface from './view/VisualWritingInterface';
 
@@ -29,8 +31,16 @@ function App() {
       element: <BaselineInterface />
     },
     {
-      path: '/',
+      path: 'glossary-view',
+      element: <GlossaryViewer />
+    },
+    {
+      path: 'launcher',
       element: <Launcher />
+    },
+    {
+      path: '/',
+      element: <GlossaryUploader />
     }
   ],
   /*{

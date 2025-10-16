@@ -1,4 +1,61 @@
-# Visual Story-Writing: Writing by Manipulating Visual Representations
+# Visual Story Analysis & Glossary Builder
+
+## New Features
+
+This application now features an intelligent glossary builder that analyzes uploaded novels and extracts:
+
+### 📚 Main Features
+
+1. **Text Upload Interface**
+   - Upload any .txt file containing your novel
+   - Automatic chunked processing for long texts
+   - Real-time progress tracking
+
+2. **Character Analysis**
+   - Automatic character extraction with descriptions
+   - Personality trait identification
+   - Relationship mapping between characters
+   - Visual character relationship graph
+
+3. **Event Timeline**
+   - Extracts major events from each text chunk (up to 5 per chunk)
+   - Visual timeline showing event progression
+   - Links events to involved characters
+   - Importance classification (major/minor)
+
+4. **Interactive Glossary**
+   - Searchable character and event database
+   - Detailed character profiles with traits and relationships
+   - Event descriptions with character involvement
+   - Visual representations of story structure
+
+### 🚀 How to Use
+
+1. Open the application
+2. Enter your OpenAI API key
+3. Upload a .txt file of your novel
+4. Click "Build Glossary" to start processing
+5. Explore the visual analysis and glossary
+
+### 🎨 Interface Layout
+
+- **Left Panel (60%)**: Visual representations
+  - Character Relationships tab: Interactive graph showing connections
+  - Event Timeline tab: Chronological event flow
+
+- **Right Panel (40%)**: Glossary panel
+  - Character list with details
+  - Event list with descriptions
+  - Search functionality
+  - Click any item for detailed view
+
+### 🔗 Legacy Interface
+
+Access the original Visual Story-Writing interface via the "Access Legacy Interface" link
+
+---
+
+# Visual Story-Writing (Legacy): Writing by Manipulating Visual Representations
 <img src="demo.gif">
 
 ## [Online Demo](https://damienmasson.com/VisualStoryWriting) / [How to build](#how-to-build-and-run) / [Publication](#publication)
