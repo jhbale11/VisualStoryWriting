@@ -147,12 +147,12 @@ export default function ActionTimeline({ events, onEventClick }: ActionTimelineP
               {idx + 1}. {event.description}
             </div>
             <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-              {event.involved_characters.slice(0, 2).map((char, i) => (
+              {event.involved_characters && event.involved_characters.slice(0, 2).map((char, i) => (
                 <Chip key={i} size="sm" variant="flat" color="secondary" style={{ fontSize: '10px' }}>
                   {char}
                 </Chip>
               ))}
-              {event.involved_characters.length > 2 && (
+              {event.involved_characters && event.involved_characters.length > 2 && (
                 <Chip size="sm" variant="flat" color="default" style={{ fontSize: '10px' }}>
                   +{event.involved_characters.length - 2}
                 </Chip>

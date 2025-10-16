@@ -61,6 +61,10 @@ export default function EntitiesEditor({ characters, events }: EntitiesEditorPro
     }));
 
     const eventEdges: Edge[] = events.flatMap((event, idx) => {
+      if (!event.involved_characters || !Array.isArray(event.involved_characters)) {
+        return [];
+      }
+
       const involvedChars = event.involved_characters.filter(charName =>
         characters.some(c => c.name === charName)
       );
