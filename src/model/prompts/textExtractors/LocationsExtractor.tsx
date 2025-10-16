@@ -1,21 +1,8 @@
 import { z } from "zod";
+import { CreateLocatioNode } from "../../../view/locationView/LocationNodeComponent";
 import { LayoutUtils } from "../../LayoutUtils";
 import { LocationNode, useModelStore } from "../../Model";
 import { JSONPrompt } from "../utils/JSONPrompt";
-
-function CreateLocatioNode(location: { name: string; emoji: string }, index: number): LocationNode {
-  return {
-    id: `location-${index}`,
-    type: 'locationNode',
-    dragHandle: '.custom-drag-handle',
-    measured: { width: 160, height: 160 },
-    position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 200 },
-    data: {
-      name: location.name,
-      emoji: location.emoji
-    }
-  };
-}
 
 const LOCATION_SCHEMA = z.object({
     locations: z.array(z.object({

@@ -8,7 +8,6 @@ export default function GlossaryUploader() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [accessKey, setAccessKey] = useState('');
-  const [projectName, setProjectName] = useState('');
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunksState] = useState(0);
 
@@ -22,10 +21,7 @@ export default function GlossaryUploader() {
   };
 
   const processText = async () => {
-    if (!file || !accessKey || !projectName.trim()) {
-      alert('프로젝트 이름, API 키, 파일을 모두 입력해주세요.');
-      return;
-    }
+    if (!file || !accessKey) return;
 
     initGemini(accessKey);
 
@@ -49,7 +45,6 @@ export default function GlossaryUploader() {
       useGlossaryStore.getState().reset();
       useGlossaryStore.getState().setFullText(text);
       useGlossaryStore.getState().setTotalChunks(chunks.length);
-      useGlossaryStore.getState().setProjectName(projectName);
 
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
@@ -64,14 +59,6 @@ export default function GlossaryUploader() {
       }
 
       setProgress(100);
-
-      try {
-        await useGlossaryStore.getState().saveProject();
-      } catch (error) {
-        console.error('Error saving project:', error);
-        alert('프로젝트 저장 중 오류가 발생했습니다.');
-      }
-
       setIsProcessing(false);
 
       setTimeout(() => {
@@ -92,34 +79,19 @@ export default function GlossaryUploader() {
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       position: 'relative'
     }}>
-      <div style={{
-        position: 'absolute',
-        top: '20px',
-        right: '20px',
-        display: 'flex',
-        gap: '15px'
-      }}>
-        <a
-          href="#/projects"
-          style={{
-            color: 'white',
-            textDecoration: 'underline',
-            fontSize: '14px'
-          }}
-        >
-          내 프로젝트
-        </a>
-        <a
-          href="#/launcher"
-          style={{
-            color: 'white',
-            textDecoration: 'underline',
-            fontSize: '14px'
-          }}
-        >
-          Legacy Interface
-        </a>
-      </div>
+      <a
+        href="#/launcher"
+        style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          color: 'white',
+          textDecoration: 'underline',
+          fontSize: '14px'
+        }}
+      >
+        Access Legacy Interface
+      </a>
       <Card style={{ width: '500px', padding: '20px' }}>
         <CardHeader>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -133,27 +105,6 @@ export default function GlossaryUploader() {
             Upload a text file to automatically extract characters, events, and relationships.
             The system will build a comprehensive glossary with visual representations.
           </p>
-
-          <div>
-            <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
-              프로젝트 이름
-            </label>
-            <input
-              type="text"
-              placeholder="예: 이상한 나라의 앨리스"
-              value={projectName}
-              onChange={(e) => {
-                setProjectName(e.target.value);
-              }}
-              style={{
-                width: '100%',
-                padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px'
-              }}
-            />
-          </div>
 
           <div>
             <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
@@ -246,7 +197,7 @@ export default function GlossaryUploader() {
             color="secondary"
             size="lg"
             onClick={processText}
-            isDisabled={!file || !accessKey || !projectName.trim() || isProcessing}
+            isDisabled={!file || !accessKey || isProcessing}
             isLoading={isProcessing}
             style={{ width: '100%' }}
           >

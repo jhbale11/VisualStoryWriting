@@ -1,37 +1,10 @@
 import { MarkerType } from "@xyflow/react";
 import { z } from "zod";
+import { CreateEntityNode } from "../../../view/entityActionView/EntityNodeComponent";
+import { CreateLocatioNode } from "../../../view/locationView/LocationNodeComponent";
 import { ActionEdge, EntityNode, LocationNode, useModelStore } from "../../Model";
 import { PromptResult } from "../utils/BasePrompt";
 import { JSONExtractorPrompt } from "./JSONExtractorPrompt";
-
-function CreateEntityNode(entity: any, index: number): EntityNode {
-  return {
-    id: `entity-${entity.name}`,
-    type: 'entityNode',
-    dragHandle: '.custom-drag-handle',
-    measured: { width: 160, height: 160 },
-    position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 200 },
-    data: {
-      name: entity.name,
-      emoji: entity.emoji,
-      properties: entity.properties || []
-    }
-  };
-}
-
-function CreateLocatioNode(location: any, index: number): LocationNode {
-  return {
-    id: `location-${index}`,
-    type: 'locationNode',
-    dragHandle: '.custom-drag-handle',
-    measured: { width: 160, height: 160 },
-    position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 200 },
-    data: {
-      name: location.name,
-      emoji: location.emoji
-    }
-  };
-}
 
 
 const SCHEMA = z.object({

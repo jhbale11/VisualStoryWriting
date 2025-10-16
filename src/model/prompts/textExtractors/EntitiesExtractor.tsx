@@ -1,22 +1,8 @@
 import { z } from "zod";
+import { CreateEntityNode } from "../../../view/entityActionView/EntityNodeComponent";
 import { LayoutUtils } from "../../LayoutUtils";
 import { EntityNode, useModelStore } from "../../Model";
 import { JSONPrompt } from "../utils/JSONPrompt";
-
-function CreateEntityNode(entity: { name: string; emoji: string; properties: Array<{ name: string; value: number }> }, index: number): EntityNode {
-  return {
-    id: `entity-${entity.name}`,
-    type: 'entityNode',
-    dragHandle: '.custom-drag-handle',
-    measured: { width: 160, height: 160 },
-    position: { x: 100 + (index % 3) * 250, y: 100 + Math.floor(index / 3) * 200 },
-    data: {
-      name: entity.name,
-      emoji: entity.emoji,
-      properties: entity.properties || []
-    }
-  };
-}
 
 const ENTITY_SCHEMA = z.object({
     entities: z.array(z.object({

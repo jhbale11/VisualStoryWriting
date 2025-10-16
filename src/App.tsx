@@ -8,7 +8,6 @@ import GlossaryBuilder from './view/GlossaryBuilder';
 import GlossaryUploader from './view/GlossaryUploader';
 import GlossaryViewer from './view/GlossaryViewer';
 import Launcher from './view/Launcher';
-import ProjectList from './view/ProjectList';
 import VisualWritingInterface from './view/VisualWritingInterface';
 
 
@@ -45,16 +44,8 @@ function App() {
       element: <Launcher />
     },
     {
-      path: 'projects',
-      element: <ProjectList />
-    },
-    {
-      path: 'new',
-      element: <GlossaryUploader />
-    },
-    {
       path: '/',
-      element: <ProjectList />
+      element: <GlossaryUploader />
     }
   ],
   /*{
