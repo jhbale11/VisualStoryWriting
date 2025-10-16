@@ -2,56 +2,99 @@
 
 ## New Features
 
-This application now features an intelligent glossary builder that analyzes uploaded novels and extracts:
+This application features an intelligent glossary builder that analyzes uploaded novels and provides a visual, interactive interface for managing story elements.
 
 ### 📚 Main Features
 
-1. **Text Upload Interface**
-   - Upload any .txt file containing your novel
-   - Automatic chunked processing for long texts
-   - Real-time progress tracking
+1. **Text Upload & Processing**
+   - Upload .txt files containing your novel
+   - Automatic AI-powered extraction using GPT-4o-mini
+   - Chunk-based processing (3000 characters per chunk)
+   - Processes up to 5 major events per chunk
 
-2. **Character Analysis**
-   - Automatic character extraction with descriptions
-   - Personality trait identification
-   - Relationship mapping between characters
-   - Visual character relationship graph
+2. **Visual Interface (Based on Original Visual Story-Writing)**
+   - **Characters & Events View**: Interactive node-based graph showing character relationships and actions
+   - **Locations View**: Circular location nodes showing spatial relationships
+   - **Event Timeline**: Horizontal timeline at the bottom showing chronological event flow
+   - Drag-and-drop node positioning
+   - Force-directed layout optimization
 
-3. **Event Timeline**
-   - Extracts major events from each text chunk (up to 5 per chunk)
-   - Visual timeline showing event progression
-   - Links events to involved characters
-   - Importance classification (major/minor)
+3. **Glossary Management**
+   - **Right Panel**: Complete glossary with search functionality
+   - Three tabs: Characters, Events, Locations
+   - Click any item to edit
+   - Real-time updates to visual interface
 
-4. **Interactive Glossary**
-   - Searchable character and event database
-   - Detailed character profiles with traits and relationships
-   - Event descriptions with character involvement
-   - Visual representations of story structure
+4. **Edit Functionality**
+   - Edit character details (name, emoji, traits, relationships)
+   - Modify events (description, locations, importance)
+   - Update locations (name, emoji, description)
+   - Delete unwanted items
+   - Add custom traits with +/- buttons
+
+5. **Import/Export**
+   - Export entire glossary as JSON
+   - Import previously saved glossaries
+   - Download JSON files for backup
+   - Compatible data format
 
 ### 🚀 How to Use
 
-1. Open the application
-2. Enter your OpenAI API key
-3. Upload a .txt file of your novel
-4. Click "Build Glossary" to start processing
-5. Explore the visual analysis and glossary
+1. **Initial Setup**
+   - Open the application
+   - Enter your OpenAI API key
+   - Upload a .txt file of your novel
 
-### 🎨 Interface Layout
+2. **Processing**
+   - Click "Build Glossary"
+   - Wait for AI processing (progress bar shows status)
+   - System extracts characters, events, and locations
 
-- **Left Panel (60%)**: Visual representations
-  - Character Relationships tab: Interactive graph showing connections
-  - Event Timeline tab: Chronological event flow
+3. **Visual Exploration**
+   - **Left Side (60%)**: Visual representations
+     - Characters & Events tab: See character nodes connected by event edges
+     - Locations tab: View spatial relationships
+     - Timeline (bottom): Scroll through events chronologically
+   - **Right Side (40%)**: Glossary panel
+     - Browse all extracted elements
+     - Search by name
+     - Click to edit details
 
-- **Right Panel (40%)**: Glossary panel
-  - Character list with details
-  - Event list with descriptions
-  - Search functionality
-  - Click any item for detailed view
+4. **Editing**
+   - Click any glossary item to open edit panel
+   - Modify fields as needed
+   - Save changes to update visual interface
+   - Delete items if necessary
 
-### 🔗 Legacy Interface
+5. **Save Your Work**
+   - Click "Export" to save glossary as JSON
+   - Download file for later use
+   - Use "Import" to reload saved glossaries
 
-Access the original Visual Story-Writing interface via the "Access Legacy Interface" link
+### 🎨 Interface Details
+
+**Main Visual Area**:
+- Character nodes: Circular nodes with emoji and name
+- Action edges: Arrows connecting characters showing events
+- Location nodes: Large circular nodes with location names
+- Timeline: Horizontal bar with event markers
+
+**Glossary Panel**:
+- Search bar for quick filtering
+- Tab-based navigation
+- Card-based item display
+- Click to edit any item
+
+**Timeline Controls**:
+- Zoom slider
+- Previous/Next buttons
+- Drag to select event ranges
+- Shows filtered event count
+
+### 🔗 Access Modes
+
+- **Main Interface**: Glossary Builder (new)
+- **Legacy Interface**: Original Visual Story-Writing tools (via "Access Legacy Interface" link)
 
 ---
 

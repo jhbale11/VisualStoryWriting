@@ -54,7 +54,7 @@ export default function GlossaryUploader() {
       setProgress(100);
       setIsProcessing(false);
 
-      window.location.hash = '/glossary-view' + `?k=${btoa(accessKey)}`;
+      window.location.hash = '/glossary-builder' + `?k=${btoa(accessKey)}`;
     };
 
     reader.readAsText(file);
