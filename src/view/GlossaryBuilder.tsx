@@ -1,17 +1,9 @@
 import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Tab, Tabs, Textarea, Tooltip, useDisclosure } from '@nextui-org/react';
-import { ReactFlowProvider, useKeyPress } from '@xyflow/react';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FaBook, FaDownload, FaSearch, FaTrashAlt, FaUpload } from 'react-icons/fa';
 import { FaLocationDot } from 'react-icons/fa6';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
-import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
 import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
-import { LayoutUtils } from '../model/LayoutUtils';
-import { useModelStore } from '../model/Model';
-import ActionTimeline from './actionTimeline/ActionTimeline';
-import EntitiesEditor from './entityActionView/EntitiesEditor';
-import GlossaryEditPanel from './glossary/GlossaryEditPanel';
-import LocationsEditor from './locationView/LocationsEditor';
 
 export default function GlossaryBuilder() {
   const [isExtracting, setIsExtracting] = useState(false);
@@ -19,12 +11,9 @@ export default function GlossaryBuilder() {
   const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations' | 'terms'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingItem, setEditingItem] = useState<{ type: 'character' | 'event' | 'location' | 'term', item: any } | null>(null);
-  const escapePressed = useKeyPress(['Escape']);
   const { isOpen: isExportOpen, onOpen: onExportOpen, onClose: onExportClose } = useDisclosure();
   const { isOpen: isImportOpen, onOpen: onImportOpen, onClose: onImportClose } = useDisclosure();
   const [jsonData, setJsonData] = useState('');
-
-  const visualPanelRef = React.createRef<HTMLDivElement>();
 
   const glossaryCharacters = useGlossaryStore(state => state.characters);
   const glossaryEvents = useGlossaryStore(state => state.events);
@@ -32,14 +21,9 @@ export default function GlossaryBuilder() {
   const glossaryTerms = useGlossaryStore(state => state.terms);
   const projectName = useGlossaryStore(state => state.projectName);
   const projectId = useGlossaryStore(state => state.projectId);
-  const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
   const saveProject = useGlossaryStore(state => state.saveProject);
-
-  const setEntityNodes = useModelStore(state => state.setEntityNodes);
-  const setActionEdges = useModelStore(state => state.setActionEdges);
-  const setLocationNodes = useModelStore(state => state.setLocationNodes);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
@@ -51,19 +35,6 @@ export default function GlossaryBuilder() {
       });
     }
   }, []);
-
-  useEffect(() => {
-    if (glossaryCharacters.length > 0 || glossaryEvents.length > 0) {
-      const { entityNodes, actionEdges, locationNodes } = convertToModelFormat();
-      setEntityNodes(entityNodes);
-      setActionEdges(actionEdges);
-      setLocationNodes(locationNodes);
-
-      const center = { x: visualPanelRef.current!.clientWidth / 2, y: visualPanelRef.current!.clientHeight / 2 };
-      LayoutUtils.optimizeNodeLayout('entity', entityNodes, setEntityNodes, center, 120, 100);
-      LayoutUtils.optimizeNodeLayout('location', locationNodes, setLocationNodes, center, 120);
-    }
-  }, [glossaryCharacters, glossaryEvents, glossaryLocations]);
 
   useEffect(() => {
     const autoSaveInterval = setInterval(async () => {
@@ -80,19 +51,6 @@ export default function GlossaryBuilder() {
     return () => clearInterval(autoSaveInterval);
   }, [glossaryCharacters, glossaryEvents, glossaryLocations, glossaryTerms]);
 
-  useEffect(() => {
-    if (escapePressed) {
-      useModelStore.getState().setSelectedNodes([]);
-      useModelStore.getState().setSelectedEdges([]);
-      useModelStore.getState().setFilteredActionsSegment(null, null);
-    }
-  }, [escapePressed]);
-
-  useEffect(() => {
-    const center = { x: visualPanelRef.current!.clientWidth / 2, y: visualPanelRef.current!.clientHeight / 2 };
-    LayoutUtils.optimizeNodeLayout('entity', useModelStore.getState().entityNodes, useModelStore.getState().setEntityNodes, center, 120, 100);
-    LayoutUtils.optimizeNodeLayout('location', useModelStore.getState().locationNodes, useModelStore.getState().setLocationNodes, center, 120);
-  }, [selectedTab]);
 
   const handleExport = () => {
     const json = exportToJSON();
@@ -147,43 +105,7 @@ export default function GlossaryBuilder() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%' }}>
-        <div className='flex flex-col' style={{ position: 'relative', width: '60%' }}>
-          <div style={{ width: '100%', height: '100%', background: '#F3F4F6', borderBottom: '1px solid #DDDDDF' }} ref={visualPanelRef}>
-            {selectedTab === 'entities' && <ReactFlowProvider><EntitiesEditor /></ReactFlowProvider>}
-            {selectedTab === 'locations' && <ReactFlowProvider><LocationsEditor /></ReactFlowProvider>}
-            <Tabs
-              keyboardActivation='manual'
-              onSelectionChange={setSelectedTab as any}
-              selectedKey={selectedTab}
-              color='primary'
-              variant='bordered'
-              style={{ position: 'absolute', left: '50%', top: 10, transform: 'translate(-50%, 0)' }}
-              classNames={{ tabList: 'bg-white' }}
-            >
-              <Tab key={'entities'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters & Events</span>} />
-              <Tab key={'locations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
-              <Tab key={'terms'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaBook style={{ marginRight: 3, fontSize: 18 }} /> Terms Dictionary</span>} />
-            </Tabs>
-
-            <Button style={{ position: 'absolute', right: 10, top: 10, fontSize: 18 }} isIconOnly onClick={(e) => {
-              LayoutUtils.stopAllSimulations();
-              useModelStore.getState().setActionEdges([]);
-              useModelStore.getState().setLocationNodes([]);
-              useModelStore.getState().setEntityNodes([]);
-              useModelStore.getState().setFilteredActionsSegment(null, null);
-              useModelStore.getState().setHighlightedActionsSegment(null, null);
-              useGlossaryStore.getState().reset();
-            }}><FaTrashAlt /></Button>
-
-            <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', display: 'flex', gap: '10px', background: 'white', padding: '10px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-              <span style={{ fontSize: '14px', color: '#666' }}>
-                {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
-              </span>
-            </div>
-          </div>
-          <ReactFlowProvider><ActionTimeline /></ReactFlowProvider>
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%', overflow: 'hidden' }}>
 
         <div style={{ width: '40%', background: 'white', borderLeft: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '20px', borderBottom: '1px solid #ddd' }}>
@@ -397,13 +319,6 @@ export default function GlossaryBuilder() {
         </div>
       </div>
 
-      {editingItem && (
-        <GlossaryEditPanel
-          type={editingItem.type}
-          item={editingItem.item}
-          onClose={() => setEditingItem(null)}
-        />
-      )}
 
       <Modal isOpen={isExportOpen} onClose={onExportClose} size="3xl">
         <ModalContent>

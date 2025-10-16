@@ -1,32 +1,20 @@
-import { Card, CardBody, CardHeader, Tab, Tabs } from '@nextui-org/react';
-import { useEffect, useState } from 'react';
-import { Character, Event, useGlossaryStore } from '../model/GlossaryModel';
-import CharacterRelationshipGraph from './glossary/CharacterRelationshipGraph';
-import EventTimeline from './glossary/EventTimeline';
-import GlossaryPanel from './glossary/GlossaryPanel';
+import { Tab, Tabs } from '@nextui-org/react';
+import { useState } from 'react';
+import { useGlossaryStore } from '../model/GlossaryModel';
 
 export default function GlossaryViewer() {
   const characters = useGlossaryStore((state) => state.characters);
   const events = useGlossaryStore((state) => state.events);
   const [selectedTab, setSelectedTab] = useState<'characters' | 'events'>('characters');
-  const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-
-  useEffect(() => {
-    if (characters.length > 0 && !selectedCharacter) {
-      setSelectedCharacter(characters[0]);
-    }
-  }, [characters]);
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#f5f5f5' }}>
       <div
         style={{
-          width: '60%',
+          width: '100%',
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
-          borderRight: '1px solid #ddd',
         }}
       >
         <div
@@ -50,37 +38,39 @@ export default function GlossaryViewer() {
           style={{ padding: '20px 20px 0 20px', background: 'white' }}
           color="secondary"
         >
-          <Tab key="characters" title="Character Relationships" />
-          <Tab key="events" title="Event Timeline" />
+          <Tab key="characters" title="Characters" />
+          <Tab key="events" title="Events" />
         </Tabs>
 
-        <div style={{ flex: 1, overflow: 'auto', background: 'white' }}>
+        <div style={{ flex: 1, overflow: 'auto', background: 'white', padding: '20px' }}>
           {selectedTab === 'characters' && (
-            <CharacterRelationshipGraph
-              characters={characters}
-              onCharacterSelect={setSelectedCharacter}
-              selectedCharacterId={selectedCharacter?.id}
-            />
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '15px' }}>Characters</h2>
+              <div style={{ display: 'grid', gap: '15px' }}>
+                {characters.map((char) => (
+                  <div key={char.id} style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '8px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>{char.name}</h3>
+                    <p style={{ color: '#666', marginTop: '5px' }}>{char.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
           {selectedTab === 'events' && (
-            <EventTimeline
-              events={events}
-              characters={characters}
-              onEventSelect={setSelectedEvent}
-              selectedEventId={selectedEvent?.id}
-            />
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '15px' }}>Events</h2>
+              <div style={{ display: 'grid', gap: '15px' }}>
+                {events.map((event) => (
+                  <div key={event.id} style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '8px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 'bold' }}>{event.name}</h3>
+                    <p style={{ color: '#666', marginTop: '5px' }}>{event.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
-
-      <GlossaryPanel
-        characters={characters}
-        events={events}
-        selectedCharacter={selectedCharacter}
-        selectedEvent={selectedEvent}
-        onCharacterSelect={setSelectedCharacter}
-        onEventSelect={setSelectedEvent}
-      />
     </div>
   );
 }
