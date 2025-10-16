@@ -30,13 +30,27 @@ export default function GlossaryBuilder() {
   const glossaryEvents = useGlossaryStore(state => state.events);
   const glossaryLocations = useGlossaryStore(state => state.locations);
   const glossaryTerms = useGlossaryStore(state => state.terms);
+  const projectName = useGlossaryStore(state => state.projectName);
+  const projectId = useGlossaryStore(state => state.projectId);
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
+  const saveProject = useGlossaryStore(state => state.saveProject);
 
   const setEntityNodes = useModelStore(state => state.setEntityNodes);
   const setActionEdges = useModelStore(state => state.setActionEdges);
   const setLocationNodes = useModelStore(state => state.setLocationNodes);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const projectIdParam = urlParams.get('id');
+
+    if (projectIdParam && !projectId) {
+      useGlossaryStore.getState().loadProject(projectIdParam).catch(error => {
+        console.error('Failed to load project from URL:', error);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (glossaryCharacters.length > 0 || glossaryEvents.length > 0) {
@@ -50,6 +64,21 @@ export default function GlossaryBuilder() {
       LayoutUtils.optimizeNodeLayout('location', locationNodes, setLocationNodes, center, 120);
     }
   }, [glossaryCharacters, glossaryEvents, glossaryLocations]);
+
+  useEffect(() => {
+    const autoSaveInterval = setInterval(async () => {
+      if (glossaryCharacters.length > 0 || glossaryEvents.length > 0) {
+        try {
+          await saveProject();
+          console.log('Project auto-saved');
+        } catch (error) {
+          console.error('Auto-save failed:', error);
+        }
+      }
+    }, 30000);
+
+    return () => clearInterval(autoSaveInterval);
+  }, [glossaryCharacters, glossaryEvents, glossaryLocations, glossaryTerms]);
 
   useEffect(() => {
     if (escapePressed) {
@@ -94,9 +123,16 @@ export default function GlossaryBuilder() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: 'white', borderBottom: '1px solid #ddd' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>
-          Glossary Builder
-        </h1>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>
+            Glossary Builder
+          </h1>
+          {projectName && (
+            <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>
+              {projectName}
+            </p>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <Tooltip content="Import JSON">
             <Button size="sm" variant="flat" startContent={<FaUpload />} onClick={onImportOpen}>

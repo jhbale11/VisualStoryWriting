@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { create } from 'zustand';
 import { Entity, EntityNode, Action, ActionEdge, LocationNode, Location } from './Model';
+import { supabase } from '../lib/supabase';
 
 let geminiAPI: GoogleGenerativeAI | null = null;
 
@@ -63,12 +64,15 @@ export interface GlossaryState {
   processedChunks: number;
   totalChunks: number;
   isLoading: boolean;
+  projectId: string | null;
+  projectName: string;
 }
 
 interface GlossaryAction {
   reset: () => void;
   setFullText: (text: string) => void;
   setTotalChunks: (total: number) => void;
+  setProjectName: (name: string) => void;
   processChunk: (chunk: string, chunkIndex: number) => Promise<void>;
   addCharacter: (character: GlossaryCharacter) => void;
   addEvent: (event: GlossaryEvent) => void;
@@ -86,6 +90,8 @@ interface GlossaryAction {
   convertToModelFormat: () => { entityNodes: EntityNode[], actionEdges: ActionEdge[], locationNodes: LocationNode[] };
   importFromJSON: (json: string) => void;
   exportToJSON: () => string;
+  saveProject: () => Promise<void>;
+  loadProject: (projectId: string) => Promise<void>;
 }
 
 const initialState: GlossaryState = {
@@ -97,6 +103,8 @@ const initialState: GlossaryState = {
   processedChunks: 0,
   totalChunks: 0,
   isLoading: false,
+  projectId: null,
+  projectName: '',
 };
 
 async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
@@ -263,6 +271,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
   reset: () => set({ ...initialState }),
   setFullText: (text) => set({ fullText: text }),
   setTotalChunks: (total) => set({ totalChunks: total }),
+  setProjectName: (name) => set({ projectName: name }),
 
   processChunk: async (chunk, chunkIndex) => {
     set({ isLoading: true });
@@ -501,5 +510,80 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       fullText: state.fullText,
     };
     return JSON.stringify(data, null, 2);
+  },
+
+  saveProject: async () => {
+    const state = get();
+    const { projectId, projectName, characters, events, locations, terms, fullText, totalChunks } = state;
+
+    try {
+      if (projectId) {
+        const { error } = await supabase
+          .from('glossary_projects')
+          .update({
+            name: projectName,
+            full_text: fullText,
+            characters,
+            events,
+            locations,
+            terms,
+            total_chunks: totalChunks,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', projectId);
+
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('glossary_projects')
+          .insert({
+            name: projectName,
+            full_text: fullText,
+            characters,
+            events,
+            locations,
+            terms,
+            total_chunks: totalChunks,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          set({ projectId: data.id });
+        }
+      }
+    } catch (error) {
+      console.error('Error saving project:', error);
+      throw error;
+    }
+  },
+
+  loadProject: async (projectId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('glossary_projects')
+        .select('*')
+        .eq('id', projectId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) throw new Error('Project not found');
+
+      set({
+        projectId: data.id,
+        projectName: data.name,
+        fullText: data.full_text,
+        characters: data.characters || [],
+        events: data.events || [],
+        locations: data.locations || [],
+        terms: data.terms || [],
+        totalChunks: data.total_chunks || 0,
+        processedChunks: data.total_chunks || 0,
+      });
+    } catch (error) {
+      console.error('Error loading project:', error);
+      throw error;
+    }
   },
 }));
