@@ -3,7 +3,11 @@ import { useEffect, useState } from 'react';
 import { FaBook, FaDownload, FaSearch, FaTrashAlt, FaUpload } from 'react-icons/fa';
 import { FaLocationDot } from 'react-icons/fa6';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
+import { MdTimeline } from 'react-icons/md';
 import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
+import EntitiesEditor from './EntitiesEditor';
+import LocationsEditor from './LocationsEditor';
+import ActionTimeline from './ActionTimeline';
 
 export default function GlossaryBuilder() {
   const [isExtracting, setIsExtracting] = useState(false);
@@ -105,8 +109,8 @@ export default function GlossaryBuilder() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%', overflow: 'hidden' }}>
-        <div style={{ width: '60%', background: '#F3F4F6', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, overflow: 'hidden' }}>
+        <div style={{ width: '60%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
@@ -115,95 +119,54 @@ export default function GlossaryBuilder() {
             style={{ position: 'absolute', left: '50%', top: 10, transform: 'translate(-50%, 0)', zIndex: 10 }}
             classNames={{ tabList: 'bg-white' }}
           >
-            <Tab key="entities" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters</span>} />
+            <Tab key="entities" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters & Events</span>} />
             <Tab key="locations" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
-            <Tab key="terms" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><FaBook style={{ marginRight: 3, fontSize: 18 }} /> Terms</span>} />
           </Tabs>
 
-          <div style={{ flex: 1, overflow: 'auto', padding: '60px 20px 20px' }}>
-            {selectedTab === 'entities' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
-                {glossaryCharacters.map((char) => (
-                  <Card key={char.id} style={{ padding: '15px', background: 'white' }}>
-                    <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-                      <div style={{ fontSize: '48px', marginBottom: '10px' }}>{char.emoji}</div>
-                      <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{char.name}</h3>
-                      {char.korean_name && (
-                        <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>{char.korean_name}</p>
-                      )}
-                    </div>
-                    <Divider style={{ marginBottom: '10px' }} />
-                    <p style={{ fontSize: '13px', color: '#666', marginBottom: '10px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
-                      {char.description}
-                    </p>
-                    {char.traits.length > 0 && (
-                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                        {char.traits.slice(0, 3).map((trait, idx) => (
-                          <Chip key={idx} size="sm" variant="flat" color="secondary">{trait}</Chip>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
-                ))}
-              </div>
-            )}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: '50px' }}>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              {selectedTab === 'entities' && glossaryCharacters.length > 0 && (
+                <EntitiesEditor
+                  characters={glossaryCharacters}
+                  events={glossaryEvents}
+                />
+              )}
 
-            {selectedTab === 'locations' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
-                {glossaryLocations.map((loc) => (
-                  <Card key={loc.id} style={{ padding: '15px', background: 'white' }}>
-                    <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-                      <div style={{ fontSize: '48px', marginBottom: '10px' }}>{loc.emoji}</div>
-                      <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{loc.name}</h3>
-                    </div>
-                    <Divider style={{ marginBottom: '10px' }} />
-                    <p style={{ fontSize: '13px', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>
-                      {loc.description}
-                    </p>
-                  </Card>
-                ))}
-              </div>
-            )}
+              {selectedTab === 'entities' && glossaryCharacters.length === 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#F3F4F6' }}>
+                  <div style={{ textAlign: 'center', color: '#999' }}>
+                    <IoPersonCircle style={{ fontSize: '64px', marginBottom: '20px' }} />
+                    <p>Upload a novel to extract characters and events</p>
+                  </div>
+                </div>
+              )}
 
-            {selectedTab === 'terms' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '15px' }}>
-                {glossaryTerms.map((term) => (
-                  <Card key={term.id} style={{ padding: '15px', background: 'white' }}>
-                    <div style={{ marginBottom: '10px' }}>
-                      <h3 style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{term.original}</h3>
-                      <p style={{ fontSize: '14px', color: '#888', marginTop: '5px' }}>→ {term.translation}</p>
-                    </div>
-                    <Divider style={{ marginBottom: '10px' }} />
-                    <p style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{term.context}</p>
-                    <Chip size="sm" variant="flat" color="secondary">{term.category}</Chip>
-                  </Card>
-                ))}
-              </div>
-            )}
+              {selectedTab === 'locations' && glossaryLocations.length > 0 && (
+                <LocationsEditor locations={glossaryLocations} />
+              )}
 
-            {selectedTab === 'entities' && glossaryCharacters.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-                <IoPersonCircle style={{ fontSize: '64px', marginBottom: '20px' }} />
-                <p>아직 추출된 인물이 없습니다.</p>
-              </div>
-            )}
+              {selectedTab === 'locations' && glossaryLocations.length === 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#F3F4F6' }}>
+                  <div style={{ textAlign: 'center', color: '#999' }}>
+                    <FaLocationDot style={{ fontSize: '64px', marginBottom: '20px' }} />
+                    <p>Upload a novel to extract locations</p>
+                  </div>
+                </div>
+              )}
+            </div>
 
-            {selectedTab === 'locations' && glossaryLocations.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-                <FaLocationDot style={{ fontSize: '64px', marginBottom: '20px' }} />
-                <p>아직 추출된 장소가 없습니다.</p>
-              </div>
-            )}
-
-            {selectedTab === 'terms' && glossaryTerms.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-                <FaBook style={{ fontSize: '64px', marginBottom: '20px' }} />
-                <p>아직 추출된 용어가 없습니다.</p>
-              </div>
+            {glossaryEvents.length > 0 && (
+              <ActionTimeline
+                events={glossaryEvents}
+                onEventClick={(event) => {
+                  setGlossaryTab('events');
+                  setEditingItem({ type: 'event', item: event });
+                }}
+              />
             )}
           </div>
 
-          <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', background: 'white', padding: '10px 20px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+          <div style={{ position: 'absolute', left: '50%', bottom: glossaryEvents.length > 0 ? 130 : 20, transform: 'translateX(-50%)', background: 'white', padding: '10px 20px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', zIndex: 10 }}>
             <span style={{ fontSize: '14px', color: '#666' }}>
               {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
             </span>
