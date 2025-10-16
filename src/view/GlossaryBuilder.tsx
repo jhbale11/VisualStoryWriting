@@ -106,6 +106,109 @@ export default function GlossaryBuilder() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%', overflow: 'hidden' }}>
+        <div style={{ width: '60%', background: '#F3F4F6', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(key as string)}
+            color="primary"
+            variant="bordered"
+            style={{ position: 'absolute', left: '50%', top: 10, transform: 'translate(-50%, 0)', zIndex: 10 }}
+            classNames={{ tabList: 'bg-white' }}
+          >
+            <Tab key="entities" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters</span>} />
+            <Tab key="locations" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
+            <Tab key="terms" title={<span style={{ display: 'flex', alignItems: 'center', fontSize: 15 }}><FaBook style={{ marginRight: 3, fontSize: 18 }} /> Terms</span>} />
+          </Tabs>
+
+          <div style={{ flex: 1, overflow: 'auto', padding: '60px 20px 20px' }}>
+            {selectedTab === 'entities' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
+                {glossaryCharacters.map((char) => (
+                  <Card key={char.id} style={{ padding: '15px', background: 'white' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '10px' }}>{char.emoji}</div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{char.name}</h3>
+                      {char.korean_name && (
+                        <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>{char.korean_name}</p>
+                      )}
+                    </div>
+                    <Divider style={{ marginBottom: '10px' }} />
+                    <p style={{ fontSize: '13px', color: '#666', marginBottom: '10px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
+                      {char.description}
+                    </p>
+                    {char.traits.length > 0 && (
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                        {char.traits.slice(0, 3).map((trait, idx) => (
+                          <Chip key={idx} size="sm" variant="flat" color="secondary">{trait}</Chip>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {selectedTab === 'locations' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '20px' }}>
+                {glossaryLocations.map((loc) => (
+                  <Card key={loc.id} style={{ padding: '15px', background: 'white' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '10px' }}>{loc.emoji}</div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: 0 }}>{loc.name}</h3>
+                    </div>
+                    <Divider style={{ marginBottom: '10px' }} />
+                    <p style={{ fontSize: '13px', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>
+                      {loc.description}
+                    </p>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {selectedTab === 'terms' && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '15px' }}>
+                {glossaryTerms.map((term) => (
+                  <Card key={term.id} style={{ padding: '15px', background: 'white' }}>
+                    <div style={{ marginBottom: '10px' }}>
+                      <h3 style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{term.original}</h3>
+                      <p style={{ fontSize: '14px', color: '#888', marginTop: '5px' }}>→ {term.translation}</p>
+                    </div>
+                    <Divider style={{ marginBottom: '10px' }} />
+                    <p style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{term.context}</p>
+                    <Chip size="sm" variant="flat" color="secondary">{term.category}</Chip>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {selectedTab === 'entities' && glossaryCharacters.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
+                <IoPersonCircle style={{ fontSize: '64px', marginBottom: '20px' }} />
+                <p>아직 추출된 인물이 없습니다.</p>
+              </div>
+            )}
+
+            {selectedTab === 'locations' && glossaryLocations.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
+                <FaLocationDot style={{ fontSize: '64px', marginBottom: '20px' }} />
+                <p>아직 추출된 장소가 없습니다.</p>
+              </div>
+            )}
+
+            {selectedTab === 'terms' && glossaryTerms.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
+                <FaBook style={{ fontSize: '64px', marginBottom: '20px' }} />
+                <p>아직 추출된 용어가 없습니다.</p>
+              </div>
+            )}
+          </div>
+
+          <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', background: 'white', padding: '10px 20px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+            <span style={{ fontSize: '14px', color: '#666' }}>
+              {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
+            </span>
+          </div>
+        </div>
 
         <div style={{ width: '40%', background: 'white', borderLeft: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '20px', borderBottom: '1px solid #ddd' }}>
