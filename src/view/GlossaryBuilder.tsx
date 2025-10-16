@@ -1,11 +1,11 @@
 import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Tab, Tabs, Textarea, Tooltip, useDisclosure } from '@nextui-org/react';
 import { ReactFlowProvider, useKeyPress } from '@xyflow/react';
 import React, { useEffect, useState } from 'react';
-import { FaDownload, FaSearch, FaTrashAlt, FaUpload } from 'react-icons/fa';
+import { FaBook, FaDownload, FaSearch, FaTrashAlt, FaUpload } from 'react-icons/fa';
 import { FaLocationDot } from 'react-icons/fa6';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
 import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
-import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, useGlossaryStore } from '../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
 import { LayoutUtils } from '../model/LayoutUtils';
 import { useModelStore } from '../model/Model';
 import ActionTimeline from './actionTimeline/ActionTimeline';
@@ -16,9 +16,9 @@ import LocationsEditor from './locationView/LocationsEditor';
 export default function GlossaryBuilder() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [selectedTab, setSelectedTab] = useState('entities');
-  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations'>('characters');
+  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations' | 'terms'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingItem, setEditingItem] = useState<{ type: 'character' | 'event' | 'location', item: any } | null>(null);
+  const [editingItem, setEditingItem] = useState<{ type: 'character' | 'event' | 'location' | 'term', item: any } | null>(null);
   const escapePressed = useKeyPress(['Escape']);
   const { isOpen: isExportOpen, onOpen: onExportOpen, onClose: onExportClose } = useDisclosure();
   const { isOpen: isImportOpen, onOpen: onImportOpen, onClose: onImportClose } = useDisclosure();
@@ -29,6 +29,7 @@ export default function GlossaryBuilder() {
   const glossaryCharacters = useGlossaryStore(state => state.characters);
   const glossaryEvents = useGlossaryStore(state => state.events);
   const glossaryLocations = useGlossaryStore(state => state.locations);
+  const glossaryTerms = useGlossaryStore(state => state.terms);
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
@@ -126,6 +127,7 @@ export default function GlossaryBuilder() {
             >
               <Tab key={'entities'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters & Events</span>} />
               <Tab key={'locations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
+              <Tab key={'terms'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaBook style={{ marginRight: 3, fontSize: 18 }} /> Terms Dictionary</span>} />
             </Tabs>
 
             <Button style={{ position: 'absolute', right: 10, top: 10, fontSize: 18 }} isIconOnly onClick={(e) => {
@@ -140,7 +142,7 @@ export default function GlossaryBuilder() {
 
             <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', display: 'flex', gap: '10px', background: 'white', padding: '10px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
               <span style={{ fontSize: '14px', color: '#666' }}>
-                {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations
+                {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
               </span>
             </div>
           </div>
@@ -157,7 +159,7 @@ export default function GlossaryBuilder() {
               startContent={<FaSearch />}
               size="sm"
             />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '15px', flexWrap: 'wrap' }}>
               <Chip
                 onClick={() => setGlossaryTab('characters')}
                 color={glossaryTab === 'characters' ? 'secondary' : 'default'}
@@ -181,6 +183,14 @@ export default function GlossaryBuilder() {
                 style={{ cursor: 'pointer' }}
               >
                 Locations ({glossaryLocations.length})
+              </Chip>
+              <Chip
+                onClick={() => setGlossaryTab('terms')}
+                color={glossaryTab === 'terms' ? 'secondary' : 'default'}
+                variant={glossaryTab === 'terms' ? 'solid' : 'bordered'}
+                style={{ cursor: 'pointer' }}
+              >
+                Terms ({glossaryTerms.length})
               </Chip>
             </div>
           </div>
@@ -303,6 +313,45 @@ export default function GlossaryBuilder() {
                         <p style={{ fontSize: '14px', color: '#666' }}>
                           {loc.description}
                         </p>
+                      </CardBody>
+                    </Card>
+                  ))}
+              </div>
+            )}
+
+            {glossaryTab === 'terms' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {glossaryTerms
+                  .filter(term =>
+                    term.original.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    term.translation.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((term) => (
+                    <Card
+                      key={term.id}
+                      isPressable
+                      isHoverable
+                      onClick={() => setEditingItem({ type: 'term', item: term })}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <CardHeader>
+                        <div style={{ width: '100%' }}>
+                          <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
+                            {term.original}
+                          </h3>
+                          <p style={{ fontSize: '14px', color: '#888', marginTop: '5px' }}>
+                            → {term.translation}
+                          </p>
+                        </div>
+                      </CardHeader>
+                      <Divider />
+                      <CardBody>
+                        <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
+                          {term.context}
+                        </p>
+                        <Chip size="sm" variant="flat" color="secondary">
+                          {term.category}
+                        </Chip>
                       </CardBody>
                     </Card>
                   ))}

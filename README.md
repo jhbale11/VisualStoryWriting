@@ -2,88 +2,152 @@
 
 ## New Features
 
-This application features an intelligent glossary builder that analyzes uploaded novels and provides a visual, interactive interface for managing story elements.
+This application features an intelligent glossary builder that analyzes uploaded novels and provides a visual, interactive interface for managing story elements with comprehensive character and event information.
 
 ### 📚 Main Features
 
 1. **Text Upload & Processing**
    - Upload .txt files containing your novel
-   - Automatic AI-powered extraction using GPT-4o-mini
-   - Chunk-based processing (3000 characters per chunk)
-   - Processes up to 5 major events per chunk
+   - **Powered by Google Gemini 2.0 Flash** for advanced AI analysis
+   - Chunk-based processing (8000 characters per chunk for comprehensive context)
+   - Processes **entire novel** automatically (all chunks, not just the first)
+   - Up to 5 major events extracted per chunk
+   - Real-time progress tracking with chunk counter
 
 2. **Visual Interface (Based on Original Visual Story-Writing)**
    - **Characters & Events View**: Interactive node-based graph showing character relationships and actions
    - **Locations View**: Circular location nodes showing spatial relationships
+   - **Terms Dictionary View**: NEW! Dedicated interface for translation glossary
    - **Event Timeline**: Horizontal timeline at the bottom showing chronological event flow
    - Drag-and-drop node positioning
    - Force-directed layout optimization
 
-3. **Glossary Management**
+3. **Detailed Character Analysis**
+   - **Comprehensive Information Extraction**:
+     - Korean and English names
+     - Physical appearance (height, build, hair color, eye color, skin tone, distinctive features)
+     - Detailed personality description
+     - 3-5+ personality traits
+     - Age, gender, occupation
+     - Relationships with other characters (detailed descriptions)
+   - All information is editable through the glossary panel
+   - Character merging across chunks for consistent tracking
+
+4. **Glossary Management**
    - **Right Panel**: Complete glossary with search functionality
-   - Three tabs: Characters, Events, Locations
+   - **Four tabs**: Characters, Events, Locations, Terms
    - Click any item to edit
    - Real-time updates to visual interface
+   - Search across all glossary types
 
-4. **Edit Functionality**
-   - Edit character details (name, emoji, traits, relationships)
-   - Modify events (description, locations, importance)
-   - Update locations (name, emoji, description)
+5. **Translation Terms Dictionary**
+   - **NEW Feature**: Dedicated terms glossary
+   - Automatically extracts terms requiring translation attention
+   - Categories: Name, Place, Item, Concept, Other
+   - Context explanations for each term
+   - Searchable by original term or translation
+
+6. **Edit Functionality**
+   - **Enhanced Character Editing**:
+     - Names (Korean, English)
+     - Physical appearance details
+     - Personality description
+     - Multiple traits with add/remove
+     - Age, gender, occupation
+     - Emoji representation
+   - **Event Editing**: Description, locations, importance, involved characters
+   - **Location Editing**: Name, emoji, description
+   - **Term Editing**: Original, translation, context, category
    - Delete unwanted items
-   - Add custom traits with +/- buttons
+   - All changes immediately reflected in visual interface
 
-5. **Import/Export**
-   - Export entire glossary as JSON
+7. **Import/Export**
+   - Export entire glossary as JSON (includes all characters, events, locations, terms)
    - Import previously saved glossaries
    - Download JSON files for backup
-   - Compatible data format
+   - Compatible data format with full text preservation
 
 ### 🚀 How to Use
 
 1. **Initial Setup**
    - Open the application
-   - Enter your OpenAI API key
+   - Enter your **Google Gemini API key** (get from [Google AI Studio](https://aistudio.google.com/app/apikey))
    - Upload a .txt file of your novel
 
 2. **Processing**
    - Click "Build Glossary"
-   - Wait for AI processing (progress bar shows status)
-   - System extracts characters, events, and locations
+   - Wait for AI processing (shows "Processing chunk X of Y")
+   - **Processes entire novel automatically** (may take several minutes for long texts)
+   - System extracts:
+     - Characters with detailed physical and personality descriptions
+     - Major events with character involvement
+     - Locations mentioned in the text
+     - Translation terms requiring attention
 
 3. **Visual Exploration**
    - **Left Side (60%)**: Visual representations
-     - Characters & Events tab: See character nodes connected by event edges
-     - Locations tab: View spatial relationships
-     - Timeline (bottom): Scroll through events chronologically
+     - **Characters & Events tab**: See character nodes connected by event edges
+     - **Locations tab**: View spatial relationships
+     - **Terms Dictionary tab**: Browse translation glossary
+     - **Timeline (bottom)**: Scroll through events chronologically
    - **Right Side (40%)**: Glossary panel
+     - **Four tabs**: Characters, Events, Locations, Terms
      - Browse all extracted elements
-     - Search by name
+     - Search by name, term, or translation
      - Click to edit details
 
-4. **Editing**
-   - Click any glossary item to open edit panel
-   - Modify fields as needed
+4. **Editing Character Details**
+   - Click any character to open detailed edit panel
+   - Edit fields:
+     - Names (Korean, English)
+     - Physical appearance (detailed description)
+     - Personality (comprehensive description)
+     - Traits (add/remove multiple)
+     - Age, gender, occupation
+     - Emoji
    - Save changes to update visual interface
-   - Delete items if necessary
+   - Delete if necessary
 
-5. **Save Your Work**
-   - Click "Export" to save glossary as JSON
+5. **Managing Terms**
+   - Switch to Terms tab in glossary
+   - Browse all translation-sensitive terms
+   - Click to edit original, translation, context
+   - Categorize by type (Name, Place, Item, Concept, Other)
+
+6. **Save Your Work**
+   - Click "Export" to save complete glossary as JSON
+   - Includes all characters, events, locations, terms, and full text
    - Download file for later use
    - Use "Import" to reload saved glossaries
 
 ### 🎨 Interface Details
 
-**Main Visual Area**:
+**Main Visual Area** (Left 60%):
 - Character nodes: Circular nodes with emoji and name
 - Action edges: Arrows connecting characters showing events
 - Location nodes: Large circular nodes with location names
-- Timeline: Horizontal bar with event markers
+- Terms view: NEW! Dictionary interface for translation glossary
+- Timeline: Horizontal bar with event markers at bottom
 
-**Glossary Panel**:
-- Search bar for quick filtering
-- Tab-based navigation
-- Card-based item display
-- Click to edit any item
+**Glossary Panel** (Right 40%):
+- Search bar for quick filtering across all types
+- **Four-tab navigation**: Characters, Events, Locations, Terms
+- Card-based item display with detailed previews
+- Click to edit any item with full detail panel
+
+**Character Information Displayed**:
+- Name (Korean and English)
+- Physical appearance details
+- Personality description
+- Traits (3-5+)
+- Age, gender, occupation
+- Relationships with other characters
+
+**Terms Dictionary**:
+- Original term and translation
+- Context explanation
+- Category classification
+- Searchable by original or translation
 
 **Timeline Controls**:
 - Zoom slider
@@ -125,17 +189,13 @@ npm run dev
 
 
 ## How to use?
-After entering your OpenAI API key, you can test Visual Story-Writing using the shortcuts or you can run the studies.
+After entering your Gemini API key, upload a .txt file to build a comprehensive glossary with visual representations.
 Note that the system was tested and developped for recent versions of **Google Chrome** or **Mozilla Firefox**.
 
 
-## How to get an OpenAI API key?
-Because Visual Story-Writing relies on the OpenAI API, you will need a key to make it work. You will need an account properly configured, see [here](https://platform.openai.com/account/api-keys) for more info.
-Your key is never stored and the application runs locally and sends requests to the OpenAI API only.
-
-
-## Can I try without an API key?
-The systen depends on the OpenAI API to work. If you enter an incorrect key, you will still be able to go through the study but executing prompts will yield an error.
+## How to get a Gemini API key?
+The new glossary builder uses Google Gemini 2.0 Flash for AI-powered extraction. You will need a key to make it work. Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+Your key is never stored and the application runs locally and sends requests to the Gemini API only.
 
 
 ## Where are the video tutorials?

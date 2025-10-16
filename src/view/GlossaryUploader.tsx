@@ -1,15 +1,15 @@
 import { Button, Card, CardBody, CardHeader, Divider, Progress } from "@nextui-org/react";
 import { useState } from "react";
 import { FiUpload } from "react-icons/fi";
-import { useModelStore } from '../model/Model';
-import { useGlossaryStore } from '../model/GlossaryModel';
+import { initGemini, useGlossaryStore } from '../model/GlossaryModel';
 
 export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [accessKey, setAccessKey] = useState('');
-  const setOpenAIKey = useModelStore((state) => state.setOpenAIKey);
+  const [currentChunk, setCurrentChunk] = useState(0);
+  const [totalChunks, setTotalChunksState] = useState(0);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -23,38 +23,47 @@ export default function GlossaryUploader() {
   const processText = async () => {
     if (!file || !accessKey) return;
 
+    initGemini(accessKey);
+
     setIsProcessing(true);
     setProgress(0);
+    setCurrentChunk(0);
 
     const reader = new FileReader();
     reader.onload = async (e) => {
       const text = e.target?.result as string;
 
-      const chunkSize = 3000;
+      const chunkSize = 8000;
       const chunks: string[] = [];
 
       for (let i = 0; i < text.length; i += chunkSize) {
         chunks.push(text.substring(i, i + chunkSize));
       }
 
+      setTotalChunksState(chunks.length);
+
       useGlossaryStore.getState().reset();
       useGlossaryStore.getState().setFullText(text);
+      useGlossaryStore.getState().setTotalChunks(chunks.length);
 
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
+        setCurrentChunk(i + 1);
         setProgress(((i + 1) / chunks.length) * 100);
 
-        await useGlossaryStore.getState().processChunk(chunk, i);
-
-        if (i === 0) {
-          break;
+        try {
+          await useGlossaryStore.getState().processChunk(chunk, i);
+        } catch (error) {
+          console.error(`Error processing chunk ${i}:`, error);
         }
       }
 
       setProgress(100);
       setIsProcessing(false);
 
-      window.location.hash = '/glossary-builder' + `?k=${btoa(accessKey)}`;
+      setTimeout(() => {
+        window.location.hash = '/glossary-builder' + `?k=${btoa(accessKey)}`;
+      }, 500);
     };
 
     reader.readAsText(file);
@@ -99,15 +108,14 @@ export default function GlossaryUploader() {
 
           <div>
             <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
-              OpenAI API Key
+              Gemini API Key
             </label>
             <input
               type="text"
-              placeholder="sk-..."
+              placeholder="AIza..."
               value={accessKey}
               onChange={(e) => {
                 setAccessKey(e.target.value);
-                setOpenAIKey(e.target.value);
               }}
               style={{
                 width: '100%',
@@ -118,7 +126,7 @@ export default function GlossaryUploader() {
               }}
             />
             <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>
-              Get your API key from <a href="https://platform.openai.com/account/api-keys" target="_blank" rel="noopener noreferrer">OpenAI</a>
+              Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>
             </p>
           </div>
 
@@ -176,9 +184,12 @@ export default function GlossaryUploader() {
           {isProcessing && (
             <div>
               <p style={{ fontSize: '14px', marginBottom: '10px' }}>
-                Processing text... {Math.round(progress)}%
+                Processing chunk {currentChunk} of {totalChunks} ({Math.round(progress)}%)
               </p>
               <Progress value={progress} color="secondary" />
+              <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+                This may take several minutes depending on text length...
+              </p>
             </div>
           )}
 

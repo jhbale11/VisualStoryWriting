@@ -1,11 +1,11 @@
 import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Select, SelectItem, Textarea } from '@nextui-org/react';
 import { useState } from 'react';
 import { FaPlus, FaTrash } from 'react-icons/fa';
-import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, useGlossaryStore } from '../../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../../model/GlossaryModel';
 
 interface Props {
-  type: 'character' | 'event' | 'location';
-  item: GlossaryCharacter | GlossaryEvent | GlossaryLocation | null;
+  type: 'character' | 'event' | 'location' | 'term';
+  item: GlossaryCharacter | GlossaryEvent | GlossaryLocation | GlossaryTerm | null;
   onClose: () => void;
 }
 
@@ -13,9 +13,11 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
   const updateCharacter = useGlossaryStore(state => state.updateCharacter);
   const updateEvent = useGlossaryStore(state => state.updateEvent);
   const updateLocation = useGlossaryStore(state => state.updateLocation);
+  const updateTerm = useGlossaryStore(state => state.updateTerm);
   const deleteCharacter = useGlossaryStore(state => state.deleteCharacter);
   const deleteEvent = useGlossaryStore(state => state.deleteEvent);
   const deleteLocation = useGlossaryStore(state => state.deleteLocation);
+  const deleteTerm = useGlossaryStore(state => state.deleteTerm);
 
   const [editData, setEditData] = useState<any>(item || {});
 
@@ -28,6 +30,8 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
       updateEvent(item.id, editData);
     } else if (type === 'location') {
       updateLocation(item.id, editData);
+    } else if (type === 'term') {
+      updateTerm(item.id, editData);
     }
     onClose();
   };
@@ -40,6 +44,8 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
         deleteEvent(item.id);
       } else if (type === 'location') {
         deleteLocation(item.id);
+      } else if (type === 'term') {
+        deleteTerm(item.id);
       }
       onClose();
     }
@@ -99,9 +105,41 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                 onChange={(e) => setEditData({ ...editData, korean_name: e.target.value })}
               />
               <Input
+                label="English Name"
+                value={editData.english_name || ''}
+                onChange={(e) => setEditData({ ...editData, english_name: e.target.value })}
+              />
+              <Input
                 label="Emoji"
                 value={editData.emoji || ''}
                 onChange={(e) => setEditData({ ...editData, emoji: e.target.value })}
+              />
+              <Input
+                label="Age"
+                value={editData.age || ''}
+                onChange={(e) => setEditData({ ...editData, age: e.target.value })}
+              />
+              <Input
+                label="Gender"
+                value={editData.gender || ''}
+                onChange={(e) => setEditData({ ...editData, gender: e.target.value })}
+              />
+              <Input
+                label="Occupation"
+                value={editData.occupation || ''}
+                onChange={(e) => setEditData({ ...editData, occupation: e.target.value })}
+              />
+              <Textarea
+                label="Physical Appearance"
+                value={editData.physical_appearance || ''}
+                onChange={(e) => setEditData({ ...editData, physical_appearance: e.target.value })}
+                minRows={3}
+              />
+              <Textarea
+                label="Personality"
+                value={editData.personality || ''}
+                onChange={(e) => setEditData({ ...editData, personality: e.target.value })}
+                minRows={3}
               />
             </>
           )}
@@ -163,6 +201,38 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
               >
                 <SelectItem key="major" value="major">Major</SelectItem>
                 <SelectItem key="minor" value="minor">Minor</SelectItem>
+              </Select>
+            </>
+          )}
+
+          {type === 'term' && (
+            <>
+              <Input
+                label="Original Term"
+                value={editData.original || ''}
+                onChange={(e) => setEditData({ ...editData, original: e.target.value })}
+              />
+              <Input
+                label="Translation"
+                value={editData.translation || ''}
+                onChange={(e) => setEditData({ ...editData, translation: e.target.value })}
+              />
+              <Textarea
+                label="Context"
+                value={editData.context || ''}
+                onChange={(e) => setEditData({ ...editData, context: e.target.value })}
+                minRows={3}
+              />
+              <Select
+                label="Category"
+                selectedKeys={[editData.category || 'other']}
+                onChange={(e) => setEditData({ ...editData, category: e.target.value })}
+              >
+                <SelectItem key="name" value="name">Name</SelectItem>
+                <SelectItem key="place" value="place">Place</SelectItem>
+                <SelectItem key="item" value="item">Item</SelectItem>
+                <SelectItem key="concept" value="concept">Concept</SelectItem>
+                <SelectItem key="other" value="other">Other</SelectItem>
               </Select>
             </>
           )}

@@ -1,14 +1,26 @@
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { create } from 'zustand';
 import { Entity, EntityNode, Action, ActionEdge, LocationNode, Location } from './Model';
-import { openai } from './Model';
+
+let geminiAPI: GoogleGenerativeAI | null = null;
+
+export const initGemini = (apiKey: string) => {
+  geminiAPI = new GoogleGenerativeAI(apiKey);
+};
 
 export interface GlossaryCharacter {
   id: string;
   name: string;
   korean_name?: string;
+  english_name?: string;
   description: string;
+  physical_appearance: string;
+  personality: string;
   traits: string[];
   emoji: string;
+  age?: string;
+  gender?: string;
+  occupation?: string;
   relationships: Array<{
     character_name: string;
     relationship_type: string;
@@ -34,28 +46,42 @@ export interface GlossaryLocation {
   emoji: string;
 }
 
+export interface GlossaryTerm {
+  id: string;
+  original: string;
+  translation: string;
+  context: string;
+  category: 'name' | 'place' | 'item' | 'concept' | 'other';
+}
+
 export interface GlossaryState {
   characters: GlossaryCharacter[];
   events: GlossaryEvent[];
   locations: GlossaryLocation[];
+  terms: GlossaryTerm[];
   fullText: string;
   processedChunks: number;
+  totalChunks: number;
   isLoading: boolean;
 }
 
 interface GlossaryAction {
   reset: () => void;
   setFullText: (text: string) => void;
+  setTotalChunks: (total: number) => void;
   processChunk: (chunk: string, chunkIndex: number) => Promise<void>;
   addCharacter: (character: GlossaryCharacter) => void;
   addEvent: (event: GlossaryEvent) => void;
   addLocation: (location: GlossaryLocation) => void;
+  addTerm: (term: GlossaryTerm) => void;
   updateCharacter: (id: string, updates: Partial<GlossaryCharacter>) => void;
   updateEvent: (id: string, updates: Partial<GlossaryEvent>) => void;
   updateLocation: (id: string, updates: Partial<GlossaryLocation>) => void;
+  updateTerm: (id: string, updates: Partial<GlossaryTerm>) => void;
   deleteCharacter: (id: string) => void;
   deleteEvent: (id: string) => void;
   deleteLocation: (id: string) => void;
+  deleteTerm: (id: string) => void;
   mergeCharacters: (existingId: string, newCharacter: Partial<GlossaryCharacter>) => void;
   convertToModelFormat: () => { entityNodes: EntityNode[], actionEdges: ActionEdge[], locationNodes: LocationNode[] };
   importFromJSON: (json: string) => void;
@@ -66,8 +92,10 @@ const initialState: GlossaryState = {
   characters: [],
   events: [],
   locations: [],
+  terms: [],
   fullText: '',
   processedChunks: 0,
+  totalChunks: 0,
   isLoading: false,
 };
 
@@ -75,84 +103,121 @@ async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
   characters: GlossaryCharacter[];
   events: GlossaryEvent[];
   locations: GlossaryLocation[];
+  terms: GlossaryTerm[];
 }> {
-  const prompt = `Analyze the following text chunk and extract:
+  const prompt = `당신은 문학 작품 분석 전문가입니다. 다음 텍스트 조각을 분석하여 정보를 추출하세요.
 
-1. Characters: Name, Korean name (if applicable), brief description, personality traits, emoji that represents them
-2. Major events: Up to 5 most important events in this chunk
-3. Character relationships that are evident
-4. Locations mentioned
+중요: 가능한 한 상세하고 구체적으로 정보를 추출해주세요. 특히 인물의 외형, 성격, 관계는 매우 자세히 기록해주세요.
 
-Return ONLY valid JSON in this exact format:
+추출할 정보:
+
+1. **인물 (Characters)**:
+   - 이름 (한글, 영문 모두)
+   - 상세한 외형 묘사 (키, 체격, 머리색, 눈 색깔, 특징적인 외모 등)
+   - 성격 특성 (3-5가지 이상)
+   - 나이, 성별, 직업
+   - 다른 인물과의 관계 (가능한 많이)
+   - 적절한 이모지
+
+2. **주요 사건 (Events)**:
+   - 이 chunk에서 일어나는 중요한 사건 5개
+   - 각 사건에 관련된 인물들
+   - 사건이 일어난 장소
+   - 사건의 중요도
+
+3. **장소 (Locations)**:
+   - 등장하는 모든 장소
+   - 장소에 대한 설명
+   - 적절한 이모지
+
+4. **번역 용어 (Terms)**:
+   - 자주 등장하거나 번역에 주의가 필요한 용어
+   - 고유명사, 특수 용어, 문화적 개념 등
+   - 원문과 번역, 문맥 설명
+
+반드시 유효한 JSON만 반환하세요. 다른 텍스트는 포함하지 마세요.
+
+JSON 형식:
 {
   "characters": [
     {
-      "name": "Character Name",
-      "korean_name": "한글이름 (if applicable, otherwise empty string)",
-      "description": "Brief character description",
-      "traits": ["trait1", "trait2"],
+      "name": "인물 이름",
+      "korean_name": "한글 이름",
+      "english_name": "English Name",
+      "description": "인물에 대한 전반적인 설명",
+      "physical_appearance": "상세한 외형 묘사: 키, 체격, 머리색, 눈 색깔, 피부색, 특징적인 외모 등",
+      "personality": "성격에 대한 상세한 설명",
+      "traits": ["특성1", "특성2", "특성3", "특성4", "특성5"],
       "emoji": "😊",
+      "age": "나이 또는 나이대",
+      "gender": "성별",
+      "occupation": "직업",
       "relationships": [
         {
-          "character_name": "Other Character",
-          "relationship_type": "friend/enemy/family/lover/etc",
-          "description": "Brief description of relationship"
+          "character_name": "다른 인물 이름",
+          "relationship_type": "관계 유형 (친구/적/가족/연인/동료 등)",
+          "description": "관계에 대한 상세한 설명"
         }
       ]
     }
   ],
   "events": [
     {
-      "name": "Event name",
-      "description": "What happened",
-      "characters_involved": ["Character1", "Character2"],
-      "source_location": "Starting location",
-      "target_location": "Ending location",
+      "name": "사건 이름",
+      "description": "사건에 대한 상세한 설명",
+      "characters_involved": ["인물1", "인물2"],
+      "source_location": "시작 장소",
+      "target_location": "종료 장소",
       "importance": "major"
     }
   ],
   "locations": [
     {
-      "name": "Location Name",
-      "description": "Brief description",
+      "name": "장소 이름",
+      "description": "장소에 대한 설명",
       "emoji": "🏰"
+    }
+  ],
+  "terms": [
+    {
+      "original": "원문 용어",
+      "translation": "번역",
+      "context": "이 용어가 사용되는 문맥 설명",
+      "category": "name"
     }
   ]
 }
 
-Text chunk:
+분석할 텍스트:
 ${chunk}`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a literary analysis expert. Extract character and event information from text. Always return valid JSON only, no additional text.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.3,
-    });
+    if (!geminiAPI) {
+      throw new Error('Gemini API not initialized');
+    }
 
-    const content = response.choices[0].message.content || '{}';
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const content = response.text();
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     const jsonString = jsonMatch ? jsonMatch[0] : '{}';
-
     const parsed = JSON.parse(jsonString);
 
     const characters: GlossaryCharacter[] = (parsed.characters || []).map((char: any, idx: number) => ({
       id: `char-${chunkIndex}-${idx}`,
       name: char.name || 'Unknown',
       korean_name: char.korean_name || '',
+      english_name: char.english_name || '',
       description: char.description || '',
+      physical_appearance: char.physical_appearance || '',
+      personality: char.personality || '',
       traits: char.traits || [],
       emoji: char.emoji || '👤',
+      age: char.age || '',
+      gender: char.gender || '',
+      occupation: char.occupation || '',
       relationships: (char.relationships || []).map((rel: any) => ({
         character_name: rel.character_name || '',
         relationship_type: rel.relationship_type || 'unknown',
@@ -178,10 +243,18 @@ ${chunk}`;
       emoji: loc.emoji || '📍',
     }));
 
-    return { characters, events, locations };
+    const terms: GlossaryTerm[] = (parsed.terms || []).map((term: any, idx: number) => ({
+      id: `term-${chunkIndex}-${idx}`,
+      original: term.original || '',
+      translation: term.translation || '',
+      context: term.context || '',
+      category: term.category || 'other',
+    }));
+
+    return { characters, events, locations, terms };
   } catch (error) {
     console.error('Error extracting from chunk:', error);
-    return { characters: [], events: [], locations: [] };
+    return { characters: [], events: [], locations: [], terms: [] };
   }
 }
 
@@ -189,17 +262,19 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
   ...initialState,
   reset: () => set({ ...initialState }),
   setFullText: (text) => set({ fullText: text }),
+  setTotalChunks: (total) => set({ totalChunks: total }),
 
   processChunk: async (chunk, chunkIndex) => {
     set({ isLoading: true });
 
-    const { characters, events, locations } = await extractFromChunk(chunk, chunkIndex);
+    const { characters, events, locations, terms } = await extractFromChunk(chunk, chunkIndex);
 
     const existingCharacters = get().characters;
 
     characters.forEach((newChar) => {
       const existing = existingCharacters.find(
-        (c) => c.name.toLowerCase() === newChar.name.toLowerCase()
+        (c) => c.name.toLowerCase() === newChar.name.toLowerCase() ||
+               c.korean_name?.toLowerCase() === newChar.korean_name?.toLowerCase()
       );
 
       if (existing) {
@@ -220,6 +295,16 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       );
       if (!existing) {
         get().addLocation(newLoc);
+      }
+    });
+
+    const existingTerms = get().terms;
+    terms.forEach((newTerm) => {
+      const existing = existingTerms.find(
+        (t) => t.original.toLowerCase() === newTerm.original.toLowerCase()
+      );
+      if (!existing) {
+        get().addTerm(newTerm);
       }
     });
 
@@ -247,6 +332,12 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }));
   },
 
+  addTerm: (term) => {
+    set((state) => ({
+      terms: [...state.terms, term],
+    }));
+  },
+
   updateCharacter: (id, updates) => {
     set((state) => ({
       characters: state.characters.map((char) =>
@@ -271,6 +362,14 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }));
   },
 
+  updateTerm: (id, updates) => {
+    set((state) => ({
+      terms: state.terms.map((term) =>
+        term.id === id ? { ...term, ...updates } : term
+      ),
+    }));
+  },
+
   deleteCharacter: (id) => {
     set((state) => ({
       characters: state.characters.filter((char) => char.id !== id),
@@ -289,6 +388,12 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }));
   },
 
+  deleteTerm: (id) => {
+    set((state) => ({
+      terms: state.terms.filter((term) => term.id !== id),
+    }));
+  },
+
   mergeCharacters: (existingId, newCharacter) => {
     set((state) => ({
       characters: state.characters.map((char) => {
@@ -296,7 +401,12 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
           return {
             ...char,
             description: newCharacter.description || char.description,
+            physical_appearance: newCharacter.physical_appearance || char.physical_appearance,
+            personality: newCharacter.personality || char.personality,
             traits: [...new Set([...char.traits, ...(newCharacter.traits || [])])],
+            age: newCharacter.age || char.age,
+            gender: newCharacter.gender || char.gender,
+            occupation: newCharacter.occupation || char.occupation,
             relationships: [
               ...char.relationships,
               ...(newCharacter.relationships || []),
@@ -373,6 +483,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
         characters: data.characters || [],
         events: data.events || [],
         locations: data.locations || [],
+        terms: data.terms || [],
       });
     } catch (error) {
       console.error('Error importing JSON:', error);
@@ -386,6 +497,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       characters: state.characters,
       events: state.events,
       locations: state.locations,
+      terms: state.terms,
       fullText: state.fullText,
     };
     return JSON.stringify(data, null, 2);
