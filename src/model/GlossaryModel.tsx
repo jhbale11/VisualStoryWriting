@@ -196,7 +196,7 @@ ${chunk}`;
       throw new Error('Gemini API not initialized');
     }
 
-    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const content = response.text();
