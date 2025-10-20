@@ -1,15 +1,15 @@
 import { Card, CardBody, CardHeader, Chip, Divider, Input } from '@nextui-org/react';
 import { useState } from 'react';
 import { FiSearch } from 'react-icons/fi';
-import { Character, Event } from '../../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryEvent } from '../../model/GlossaryModel';
 
 interface Props {
-  characters: Character[];
-  events: Event[];
-  selectedCharacter: Character | null;
-  selectedEvent: Event | null;
-  onCharacterSelect: (character: Character) => void;
-  onEventSelect: (event: Event) => void;
+  characters: GlossaryCharacter[];
+  events: GlossaryEvent[];
+  selectedCharacter: GlossaryCharacter | null;
+  selectedEvent: GlossaryEvent | null;
+  onCharacterSelect: (character: GlossaryCharacter) => void;
+  onEventSelect: (event: GlossaryEvent) => void;
 }
 
 export default function GlossaryPanel({
@@ -125,11 +125,42 @@ export default function GlossaryPanel({
                     </div>
                   )}
 
-                  {char.relationships.length > 0 && (
+                  {char.relationships && char.relationships.length > 0 && (
                     <div style={{ marginTop: '10px' }}>
-                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold' }}>
-                        Relationships: {char.relationships.length}
+                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>
+                        Relationships ({char.relationships.length}):
                       </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                        {char.relationships.slice(0, 3).map((rel, idx) => {
+                          const sentimentColor =
+                            rel.sentiment === 'positive' ? '#22c55e' :
+                            rel.sentiment === 'negative' ? '#ef4444' :
+                            '#6b7280';
+                          return (
+                            <div key={idx} style={{
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px'
+                            }}>
+                              <div style={{
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '50%',
+                                background: sentimentColor
+                              }} />
+                              <span style={{ fontWeight: '600' }}>{rel.character_name}</span>
+                              <span style={{ color: '#888' }}>·</span>
+                              <span style={{ color: '#666' }}>{rel.relationship_type}</span>
+                            </div>
+                          );
+                        })}
+                        {char.relationships.length > 3 && (
+                          <span style={{ fontSize: '11px', color: '#888' }}>
+                            +{char.relationships.length - 3} more
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </CardBody>
