@@ -23,6 +23,8 @@ export default function GlossaryBuilder() {
   const { isOpen: isExportOpen, onOpen: onExportOpen, onClose: onExportClose } = useDisclosure();
   const { isOpen: isImportOpen, onOpen: onImportOpen, onClose: onImportClose } = useDisclosure();
   const [jsonData, setJsonData] = useState('');
+  const [topHeight, setTopHeight] = useState(70);
+  const [isDragging, setIsDragging] = useState(false);
 
   const visualPanelRef = React.createRef<HTMLDivElement>();
 
@@ -91,6 +93,38 @@ export default function GlossaryBuilder() {
     }
   };
 
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        const container = document.getElementById('visual-container');
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const newHeight = ((e.clientY - containerRect.top) / containerRect.height) * 100;
+          setTopHeight(Math.max(30, Math.min(85, newHeight)));
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: 'white', borderBottom: '1px solid #ddd' }}>
@@ -112,8 +146,8 @@ export default function GlossaryBuilder() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%' }}>
-        <div className='flex flex-col' style={{ position: 'relative', width: '60%' }}>
-          <div style={{ width: '100%', height: '100%', background: '#F3F4F6', borderBottom: '1px solid #DDDDDF' }} ref={visualPanelRef}>
+        <div id="visual-container" className='flex flex-col' style={{ position: 'relative', width: '60%' }}>
+          <div style={{ width: '100%', height: `${topHeight}%`, background: '#F3F4F6', borderBottom: '1px solid #DDDDDF' }} ref={visualPanelRef}>
             {selectedTab === 'entities' && <ReactFlowProvider><EntitiesEditor /></ReactFlowProvider>}
             {selectedTab === 'locations' && <ReactFlowProvider><LocationsEditor /></ReactFlowProvider>}
             <Tabs
@@ -146,7 +180,34 @@ export default function GlossaryBuilder() {
               </span>
             </div>
           </div>
-          <ReactFlowProvider><ActionTimeline /></ReactFlowProvider>
+
+          <div
+            onMouseDown={handleMouseDown}
+            style={{
+              height: '8px',
+              background: isDragging ? '#667eea' : '#e5e7eb',
+              cursor: 'ns-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: isDragging ? 'none' : 'background 0.2s',
+              zIndex: 10,
+            }}
+          >
+            <div
+              style={{
+                width: '40px',
+                height: '4px',
+                background: isDragging ? 'white' : '#9ca3af',
+                borderRadius: '2px',
+                transition: 'background 0.2s',
+              }}
+            />
+          </div>
+
+          <div style={{ height: `${100 - topHeight}%` }}>
+            <ReactFlowProvider><ActionTimeline /></ReactFlowProvider>
+          </div>
         </div>
 
         <div style={{ width: '40%', background: 'white', borderLeft: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>

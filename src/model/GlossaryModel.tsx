@@ -25,6 +25,7 @@ export interface GlossaryCharacter {
     character_name: string;
     relationship_type: string;
     description: string;
+    sentiment?: 'positive' | 'negative' | 'neutral';
   }>;
 }
 
