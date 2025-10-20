@@ -1,4 +1,4 @@
-import { Background, BackgroundVariant, Controls, Edge, MarkerType, Node, ReactFlow } from '@xyflow/react';
+import { Background, BackgroundVariant, Controls, Edge, MarkerType, Node, ReactFlow, useReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useEffect, useState } from 'react';
 import { GlossaryCharacter } from '../../model/GlossaryModel';
@@ -22,11 +22,13 @@ interface RelationshipEdge extends Edge {
     relationship: string;
     description: string;
     sentiment: 'positive' | 'negative' | 'neutral';
+    sourceCharacter: string;
+    targetCharacter: string;
   };
 }
 
 const getRelationshipSentiment = (relType: string): 'positive' | 'negative' | 'neutral' => {
-  const positiveKeywords = ['친구', '연인', '가족', '동료', '스승', '제자', 'friend', 'ally', 'lover', 'family', 'mentor', '좋아', '사랑', '존경', '신뢰', '부모', '자식', '형제', '자매', '동료', '파트너'];
+  const positiveKeywords = ['친구', '연인', '가족', '동료', '스승', '제자', 'friend', 'ally', 'lover', 'family', 'mentor', '좋아', '사랑', '존경', '신뢰', '부모', '자식', '형제', '자매', '파트너'];
   const negativeKeywords = ['적', '라이벌', '싫어', '미워', '원수', 'enemy', 'rival', 'hate', 'antagonist', '질투', '증오', '반목', '대립'];
 
   const lowerType = relType.toLowerCase();
@@ -51,6 +53,17 @@ const getSentimentColor = (sentiment: 'positive' | 'negative' | 'neutral'): stri
   }
 };
 
+const getSentimentLabel = (sentiment: 'positive' | 'negative' | 'neutral'): string => {
+  switch (sentiment) {
+    case 'positive':
+      return '긍정적';
+    case 'negative':
+      return '부정적';
+    case 'neutral':
+      return '중립적';
+  }
+};
+
 export default function CharacterRelationshipGraph({
   characters,
   onCharacterSelect,
@@ -58,6 +71,7 @@ export default function CharacterRelationshipGraph({
 }: Props) {
   const [nodes, setNodes] = useState<CharacterNode[]>([]);
   const [edges, setEdges] = useState<RelationshipEdge[]>([]);
+  const [selectedEdge, setSelectedEdge] = useState<RelationshipEdge | null>(null);
 
   useEffect(() => {
     if (characters.length === 0) {
@@ -167,30 +181,32 @@ export default function CharacterRelationshipGraph({
               animated: sentiment !== 'neutral',
               style: {
                 stroke: color,
-                strokeWidth: sentiment === 'neutral' ? 2 : 3,
+                strokeWidth: sentiment === 'neutral' ? 2.5 : 3.5,
               },
               labelStyle: {
                 fill: color,
-                fontWeight: 600,
+                fontWeight: 700,
                 fontSize: 13,
               },
               labelBgStyle: {
                 fill: 'white',
                 fillOpacity: 0.95,
-                rx: 4,
-                ry: 4,
+                rx: 6,
+                ry: 6,
               },
-              labelBgPadding: [8, 6],
+              labelBgPadding: [10, 8],
               markerEnd: {
                 type: MarkerType.ArrowClosed,
-                width: 22,
-                height: 22,
+                width: 24,
+                height: 24,
                 color: color,
               },
               data: {
                 relationship: rel.relationship_type,
                 description: rel.description,
                 sentiment,
+                sourceCharacter: char.name,
+                targetCharacter: targetChar.name,
               },
             });
           }
@@ -226,6 +242,13 @@ export default function CharacterRelationshipGraph({
           onNodeClick={(_, node) => {
             const charNode = node as CharacterNode;
             onCharacterSelect(charNode.data.character);
+            setSelectedEdge(null);
+          }}
+          onEdgeClick={(_, edge) => {
+            setSelectedEdge(edge as RelationshipEdge);
+          }}
+          onPaneClick={() => {
+            setSelectedEdge(null);
           }}
           fitView
           attributionPosition="bottom-left"
@@ -251,20 +274,129 @@ export default function CharacterRelationshipGraph({
         gap: '8px',
         zIndex: 10
       }}>
-        <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '2px' }}>Relationship Types</div>
+        <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '2px' }}>관계 유형</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '24px', height: '3px', background: '#22c55e', borderRadius: '2px' }} />
-          <span>Positive (친구, 가족, 연인)</span>
+          <span>긍정적 (친구, 가족, 연인)</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '24px', height: '3px', background: '#ef4444', borderRadius: '2px' }} />
-          <span>Negative (적, 라이벌)</span>
+          <span>부정적 (적, 라이벌)</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '24px', height: '2px', background: '#6b7280', borderRadius: '2px' }} />
-          <span>Neutral</span>
+          <span>중립적</span>
         </div>
       </div>
+
+      {selectedEdge && (
+        <div style={{
+          position: 'absolute',
+          bottom: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'white',
+          padding: '20px 24px',
+          borderRadius: '12px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+          maxWidth: '500px',
+          width: '90%',
+          zIndex: 20,
+          border: `3px solid ${getSentimentColor(selectedEdge.data.sentiment)}`
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'start',
+            marginBottom: '12px'
+          }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px' }}>관계</div>
+              <div style={{
+                fontSize: '18px',
+                fontWeight: 'bold',
+                color: getSentimentColor(selectedEdge.data.sentiment),
+                marginBottom: '8px'
+              }}>
+                {selectedEdge.data.relationship}
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedEdge(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#999',
+                padding: '0',
+                width: '30px',
+                height: '30px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            marginBottom: '12px',
+            padding: '10px',
+            background: '#f9fafb',
+            borderRadius: '8px'
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: '600' }}>
+              {selectedEdge.data.sourceCharacter}
+            </div>
+            <div style={{
+              fontSize: '20px',
+              color: getSentimentColor(selectedEdge.data.sentiment)
+            }}>
+              ↔
+            </div>
+            <div style={{ fontSize: '14px', fontWeight: '600' }}>
+              {selectedEdge.data.targetCharacter}
+            </div>
+          </div>
+
+          <div style={{
+            display: 'inline-block',
+            padding: '4px 10px',
+            borderRadius: '6px',
+            fontSize: '12px',
+            fontWeight: '600',
+            marginBottom: '12px',
+            background: `${getSentimentColor(selectedEdge.data.sentiment)}20`,
+            color: getSentimentColor(selectedEdge.data.sentiment)
+          }}>
+            {getSentimentLabel(selectedEdge.data.sentiment)} 관계
+          </div>
+
+          {selectedEdge.data.description && (
+            <div>
+              <div style={{ fontSize: '12px', color: '#888', marginBottom: '6px', fontWeight: '600' }}>
+                관계 설명
+              </div>
+              <div style={{
+                fontSize: '14px',
+                lineHeight: '1.6',
+                color: '#333',
+                background: '#f9fafb',
+                padding: '12px',
+                borderRadius: '8px',
+                borderLeft: `4px solid ${getSentimentColor(selectedEdge.data.sentiment)}`
+              }}>
+                {selectedEdge.data.description}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {edges.length === 0 && characters.length > 0 && (
         <div style={{
@@ -280,10 +412,10 @@ export default function CharacterRelationshipGraph({
           zIndex: 5
         }}>
           <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px', color: '#667eea' }}>
-            No relationships found
+            관계 정보 없음
           </div>
           <div style={{ fontSize: '13px', color: '#666' }}>
-            Relationships will appear after processing the text
+            텍스트 처리 후 인물 간 관계가 표시됩니다
           </div>
         </div>
       )}

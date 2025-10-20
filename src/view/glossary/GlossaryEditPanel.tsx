@@ -67,6 +67,27 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
     setEditData({ ...editData, traits: newTraits });
   };
 
+  const addRelationship = () => {
+    const newRelationships = [...(editData.relationships || []), {
+      character_name: '',
+      relationship_type: '',
+      description: '',
+      sentiment: 'neutral'
+    }];
+    setEditData({ ...editData, relationships: newRelationships });
+  };
+
+  const removeRelationship = (index: number) => {
+    const newRelationships = editData.relationships.filter((_: any, i: number) => i !== index);
+    setEditData({ ...editData, relationships: newRelationships });
+  };
+
+  const updateRelationship = (index: number, field: string, value: string) => {
+    const newRelationships = [...editData.relationships];
+    newRelationships[index] = { ...newRelationships[index], [field]: value };
+    setEditData({ ...editData, relationships: newRelationships });
+  };
+
   return (
     <div style={{
       position: 'fixed',
@@ -160,26 +181,79 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
           />
 
           {type === 'character' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Traits</label>
-                <Button size="sm" variant="flat" startContent={<FaPlus />} onPress={addTrait}>
-                  Add Trait
-                </Button>
-              </div>
-              {editData.traits?.map((trait: string, index: number) => (
-                <div key={index} style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
-                  <Input
-                    size="sm"
-                    value={trait}
-                    onChange={(e) => updateTrait(index, e.target.value)}
-                  />
-                  <Button size="sm" isIconOnly variant="flat" color="danger" onPress={() => removeTrait(index)}>
-                    <FaTrash />
+            <>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Traits</label>
+                  <Button size="sm" variant="flat" startContent={<FaPlus />} onPress={addTrait}>
+                    Add Trait
                   </Button>
                 </div>
-              ))}
-            </div>
+                {editData.traits?.map((trait: string, index: number) => (
+                  <div key={index} style={{ display: 'flex', gap: '5px', marginBottom: '5px' }}>
+                    <Input
+                      size="sm"
+                      value={trait}
+                      onChange={(e) => updateTrait(index, e.target.value)}
+                    />
+                    <Button size="sm" isIconOnly variant="flat" color="danger" onPress={() => removeTrait(index)}>
+                      <FaTrash />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <Divider style={{ margin: '20px 0' }} />
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Relationships</label>
+                  <Button size="sm" variant="flat" startContent={<FaPlus />} onPress={addRelationship}>
+                    Add Relationship
+                  </Button>
+                </div>
+                {editData.relationships?.map((rel: any, index: number) => (
+                  <Card key={index} style={{ marginBottom: '10px', padding: '10px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <Input
+                        size="sm"
+                        label="Character Name"
+                        value={rel.character_name}
+                        onChange={(e) => updateRelationship(index, 'character_name', e.target.value)}
+                      />
+                      <Input
+                        size="sm"
+                        label="Relationship Type"
+                        placeholder="e.g., 친구, 적, 연인"
+                        value={rel.relationship_type}
+                        onChange={(e) => updateRelationship(index, 'relationship_type', e.target.value)}
+                      />
+                      <Select
+                        size="sm"
+                        label="Sentiment"
+                        selectedKeys={[rel.sentiment || 'neutral']}
+                        onChange={(e) => updateRelationship(index, 'sentiment', e.target.value)}
+                      >
+                        <SelectItem key="positive" value="positive">긍정적 (Positive)</SelectItem>
+                        <SelectItem key="negative" value="negative">부정적 (Negative)</SelectItem>
+                        <SelectItem key="neutral" value="neutral">중립적 (Neutral)</SelectItem>
+                      </Select>
+                      <Textarea
+                        size="sm"
+                        label="Description"
+                        placeholder="관계에 대한 설명"
+                        value={rel.description}
+                        onChange={(e) => updateRelationship(index, 'description', e.target.value)}
+                        minRows={2}
+                      />
+                      <Button size="sm" variant="flat" color="danger" startContent={<FaTrash />} onPress={() => removeRelationship(index)}>
+                        Remove Relationship
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </>
           )}
 
           {type === 'event' && (
