@@ -457,8 +457,22 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
 
     characters.forEach((newChar) => {
       const existing = existingCharacters.find(
-        (c) => c.name.toLowerCase() === newChar.name.toLowerCase() ||
-               c.korean_name?.toLowerCase() === newChar.korean_name?.toLowerCase()
+        (c) => {
+          const cNameLower = c.name.toLowerCase().trim();
+          const newNameLower = newChar.name.toLowerCase().trim();
+          const cKoreanLower = c.korean_name?.toLowerCase().trim();
+          const newKoreanLower = newChar.korean_name?.toLowerCase().trim();
+          const cEnglishLower = c.english_name?.toLowerCase().trim();
+          const newEnglishLower = newChar.english_name?.toLowerCase().trim();
+
+          return cNameLower === newNameLower ||
+                 (cKoreanLower && newKoreanLower && cKoreanLower === newKoreanLower) ||
+                 (cEnglishLower && newEnglishLower && cEnglishLower === newEnglishLower) ||
+                 (cKoreanLower && cKoreanLower === newNameLower) ||
+                 (newKoreanLower && cNameLower === newKoreanLower) ||
+                 (cEnglishLower && cEnglishLower === newNameLower) ||
+                 (newEnglishLower && cNameLower === newEnglishLower);
+        }
       );
 
       if (existing) {
@@ -609,6 +623,11 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     set((state) => ({
       characters: state.characters.map((char) => {
         if (char.id === existingId) {
+          const existingRelNames = new Set(char.relationships.map(r => r.character_name.toLowerCase()));
+          const newRels = (newCharacter.relationships || []).filter(
+            r => !existingRelNames.has(r.character_name.toLowerCase())
+          );
+
           return {
             ...char,
             description: newCharacter.description || char.description,
@@ -618,9 +637,12 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
             age: newCharacter.age || char.age,
             gender: newCharacter.gender || char.gender,
             occupation: newCharacter.occupation || char.occupation,
+            emoji: newCharacter.emoji || char.emoji,
+            korean_name: newCharacter.korean_name || char.korean_name,
+            english_name: newCharacter.english_name || char.english_name,
             relationships: [
               ...char.relationships,
-              ...(newCharacter.relationships || []),
+              ...newRels,
             ],
           };
         }
