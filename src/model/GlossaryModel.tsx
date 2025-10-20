@@ -70,6 +70,7 @@ interface GlossaryAction {
   setFullText: (text: string) => void;
   setTotalChunks: (total: number) => void;
   processChunk: (chunk: string, chunkIndex: number) => Promise<void>;
+  consolidateResults: () => Promise<void>;
   addCharacter: (character: GlossaryCharacter) => void;
   addEvent: (event: GlossaryEvent) => void;
   addLocation: (location: GlossaryLocation) => void;
@@ -258,6 +259,133 @@ ${chunk}`;
   }
 }
 
+async function consolidateCharacters(characters: GlossaryCharacter[]): Promise<GlossaryCharacter[]> {
+  if (characters.length === 0) return [];
+
+  const prompt = `당신은 문학 작품 분석 전문가입니다. 여러 chunk에서 추출된 인물 정보들을 종합하여 각 인물의 최종 특징을 결정해주세요.
+
+다음은 chunk별로 추출된 인물 정보입니다:
+
+${JSON.stringify(characters, null, 2)}
+
+각 인물에 대해:
+1. 모든 chunk에서 나타난 특징들을 종합하여 가장 핵심적인 특징 3-5개를 선별
+2. 외형 묘사와 성격 설명을 통합하여 가장 일관되고 대표적인 설명으로 정리
+3. 관계 정보를 중복 제거하고 통합
+
+반드시 유효한 JSON만 반환하세요:
+{
+  "characters": [
+    {
+      "id": "인물ID",
+      "name": "인물 이름",
+      "korean_name": "한글 이름",
+      "english_name": "English Name",
+      "description": "통합된 전반적 설명",
+      "physical_appearance": "통합된 외형 묘사",
+      "personality": "통합된 성격 설명",
+      "traits": ["핵심특성1", "핵심특성2", "핵심특성3"],
+      "emoji": "😊",
+      "age": "나이",
+      "gender": "성별",
+      "occupation": "직업",
+      "relationships": [
+        {
+          "character_name": "다른 인물",
+          "relationship_type": "관계",
+          "description": "관계 설명"
+        }
+      ]
+    }
+  ]
+}`;
+
+  try {
+    if (!geminiAPI) {
+      throw new Error('Gemini API not initialized');
+    }
+
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const content = response.text();
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : '{}';
+    const parsed = JSON.parse(jsonString);
+
+    return parsed.characters || characters;
+  } catch (error) {
+    console.error('Error consolidating characters:', error);
+    return characters;
+  }
+}
+
+async function consolidateEvents(events: GlossaryEvent[], characters: GlossaryCharacter[]): Promise<GlossaryEvent[]> {
+  if (events.length === 0) return [];
+
+  const prompt = `당신은 문학 작품 분석 전문가입니다. 여러 chunk에서 추출된 사건들 중에서 이 소설의 서사와 인물 발전에 실제로 중요한 영향을 미치는 주요 사건만을 선별해주세요.
+
+등장 인물:
+${characters.map(c => c.name).join(', ')}
+
+추출된 모든 사건:
+${JSON.stringify(events, null, 2)}
+
+다음 기준으로 주요 사건을 선별하세요:
+1. 서사의 전개에 중요한 영향을 미치는 사건
+2. 주요 인물의 성격이나 관계가 변화하는 사건
+3. 갈등이 발생하거나 해결되는 사건
+4. 중복되거나 사소한 일상적 사건은 제외
+
+최대 15-20개의 주요 사건만 선별하되, 시간 순서대로 정렬해주세요.
+
+반드시 유효한 JSON만 반환하세요:
+{
+  "events": [
+    {
+      "id": "사건ID",
+      "name": "사건 이름",
+      "description": "사건 설명",
+      "characters_involved": ["인물1", "인물2"],
+      "source_location": "시작 장소",
+      "target_location": "종료 장소",
+      "importance": "major",
+      "chunk_index": 0
+    }
+  ]
+}`;
+
+  try {
+    if (!geminiAPI) {
+      throw new Error('Gemini API not initialized');
+    }
+
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const content = response.text();
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : '{}';
+    const parsed = JSON.parse(jsonString);
+
+    return (parsed.events || []).map((evt: any, idx: number) => ({
+      id: `consolidated-event-${idx}`,
+      name: evt.name || 'Unknown Event',
+      description: evt.description || '',
+      characters_involved: evt.characters_involved || [],
+      source_location: evt.source_location || 'unknown',
+      target_location: evt.target_location || 'unknown',
+      chunk_index: evt.chunk_index || 0,
+      importance: evt.importance || 'major',
+    }));
+  } catch (error) {
+    console.error('Error consolidating events:', error);
+    return events.filter(e => e.importance === 'major').slice(0, 20);
+  }
+}
+
 export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, get) => ({
   ...initialState,
   reset: () => set({ ...initialState }),
@@ -312,6 +440,33 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       processedChunks: chunkIndex + 1,
       isLoading: false,
     });
+  },
+
+  consolidateResults: async () => {
+    set({ isLoading: true });
+
+    const state = get();
+    const totalChunks = state.totalChunks;
+
+    if (totalChunks <= 2) {
+      set({ isLoading: false });
+      return;
+    }
+
+    try {
+      const consolidatedCharacters = await consolidateCharacters(state.characters);
+
+      const consolidatedEvents = await consolidateEvents(state.events, consolidatedCharacters);
+
+      set({
+        characters: consolidatedCharacters,
+        events: consolidatedEvents,
+        isLoading: false,
+      });
+    } catch (error) {
+      console.error('Error consolidating results:', error);
+      set({ isLoading: false });
+    }
   },
 
   addCharacter: (character) => {

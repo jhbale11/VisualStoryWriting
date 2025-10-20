@@ -10,6 +10,7 @@ export default function GlossaryUploader() {
   const [accessKey, setAccessKey] = useState('');
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunksState] = useState(0);
+  const [isConsolidating, setIsConsolidating] = useState(false);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -49,7 +50,7 @@ export default function GlossaryUploader() {
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         setCurrentChunk(i + 1);
-        setProgress(((i + 1) / chunks.length) * 100);
+        setProgress(((i + 1) / chunks.length) * 90);
 
         try {
           await useGlossaryStore.getState().processChunk(chunk, i);
@@ -57,6 +58,17 @@ export default function GlossaryUploader() {
           console.error(`Error processing chunk ${i}:`, error);
         }
       }
+
+      setProgress(95);
+      setIsConsolidating(true);
+
+      try {
+        await useGlossaryStore.getState().consolidateResults();
+      } catch (error) {
+        console.error('Error consolidating results:', error);
+      }
+
+      setIsConsolidating(false);
 
       setProgress(100);
       setIsProcessing(false);
@@ -184,11 +196,17 @@ export default function GlossaryUploader() {
           {isProcessing && (
             <div>
               <p style={{ fontSize: '14px', marginBottom: '10px' }}>
-                Processing chunk {currentChunk} of {totalChunks} ({Math.round(progress)}%)
+                {isConsolidating
+                  ? 'Consolidating results and selecting major events...'
+                  : `Processing chunk ${currentChunk} of ${totalChunks} (${Math.round(progress)}%)`
+                }
               </p>
               <Progress value={progress} color="secondary" />
               <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                This may take several minutes depending on text length...
+                {isConsolidating
+                  ? 'Analyzing overall narrative and character development...'
+                  : 'This may take several minutes depending on text length...'
+                }
               </p>
             </div>
           )}
