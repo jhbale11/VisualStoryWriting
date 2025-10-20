@@ -1,4 +1,3 @@
-import { Card, CardBody, CardHeader, Slider, Tab, Tabs } from '@nextui-org/react';
 import { useEffect, useState } from 'react';
 import { GlossaryCharacter, GlossaryEvent, useGlossaryStore } from '../model/GlossaryModel';
 import CharacterRelationshipGraph from './glossary/CharacterRelationshipGraph';
@@ -8,7 +7,6 @@ import GlossaryPanel from './glossary/GlossaryPanel';
 export default function GlossaryViewer() {
   const characters = useGlossaryStore((state) => state.characters);
   const events = useGlossaryStore((state) => state.events);
-  const [selectedTab, setSelectedTab] = useState<'characters' | 'events'>('characters');
   const [selectedCharacter, setSelectedCharacter] = useState<GlossaryCharacter | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<GlossaryEvent | null>(null);
   const [topHeight, setTopHeight] = useState(60);
@@ -88,32 +86,21 @@ export default function GlossaryViewer() {
             background: 'white',
           }}
         >
-          <Tabs
-            selectedKey={selectedTab}
-            onSelectionChange={(key) => setSelectedTab(key as any)}
-            style={{ padding: '20px 20px 0 20px', background: 'white' }}
-            color="secondary"
-          >
-            <Tab key="characters" title="Character Relationships" />
-            <Tab key="events" title="Event Timeline" />
-          </Tabs>
+          <div style={{ padding: '20px 20px 10px 20px', background: 'white', borderBottom: '1px solid #e5e7eb' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0, color: '#667eea' }}>
+              Character Relationships
+            </h2>
+            <p style={{ fontSize: '13px', color: '#888', marginTop: '5px' }}>
+              인물 간 관계를 한눈에 확인하세요
+            </p>
+          </div>
 
           <div style={{ flex: 1, overflow: 'auto', background: 'white', position: 'relative' }}>
-            {selectedTab === 'characters' && (
-              <CharacterRelationshipGraph
-                characters={characters}
-                onCharacterSelect={setSelectedCharacter}
-                selectedCharacterId={selectedCharacter?.id}
-              />
-            )}
-            {selectedTab === 'events' && (
-              <EventTimeline
-                events={events}
-                characters={characters}
-                onEventSelect={setSelectedEvent}
-                selectedEventId={selectedEvent?.id}
-              />
-            )}
+            <CharacterRelationshipGraph
+              characters={characters}
+              onCharacterSelect={setSelectedCharacter}
+              selectedCharacterId={selectedCharacter?.id}
+            />
           </div>
         </div>
 
@@ -143,19 +130,21 @@ export default function GlossaryViewer() {
 
         <div
           style={{
-            height: `${100 - topHeight}%`,
+            flex: 1,
             background: '#f9fafb',
             borderTop: '1px solid #ddd',
             overflow: 'auto',
-            padding: '20px',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '15px' }}>
-            Timeline View
-          </h2>
-          <p style={{ color: '#666', fontSize: '14px' }}>
-            Additional timeline content will be displayed here. Adjust the divider to resize.
-          </p>
+          <EventTimeline
+            events={events}
+            characters={characters}
+            onEventSelect={setSelectedEvent}
+            selectedEventId={selectedEvent?.id}
+            isExpanded={true}
+          />
         </div>
       </div>
 

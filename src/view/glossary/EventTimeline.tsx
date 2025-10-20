@@ -1,11 +1,12 @@
 import { Card, CardBody, Chip } from '@nextui-org/react';
-import { Character, Event } from '../../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryEvent } from '../../model/GlossaryModel';
 
 interface Props {
-  events: Event[];
-  characters: Character[];
-  onEventSelect: (event: Event) => void;
+  events: GlossaryEvent[];
+  characters: GlossaryCharacter[];
+  onEventSelect: (event: GlossaryEvent) => void;
   selectedEventId?: string;
+  isExpanded?: boolean;
 }
 
 export default function EventTimeline({
@@ -13,6 +14,7 @@ export default function EventTimeline({
   characters,
   onEventSelect,
   selectedEventId,
+  isExpanded = false,
 }: Props) {
   const sortedEvents = [...events].sort((a, b) => a.chunk_index - b.chunk_index);
 
@@ -22,8 +24,13 @@ export default function EventTimeline({
   };
 
   return (
-    <div style={{ padding: '20px', overflowY: 'auto' }}>
-      <div style={{ position: 'relative' }}>
+    <div style={{ padding: '20px', overflowY: 'auto', height: '100%' }}>
+      {isExpanded && (
+        <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px' }}>
+          Event Timeline
+        </h2>
+      )}
+      <div style={{ position: 'relative', minHeight: '100%' }}>
         <div
           style={{
             position: 'absolute',

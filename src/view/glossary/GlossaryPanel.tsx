@@ -126,11 +126,11 @@ export default function GlossaryPanel({
                   )}
 
                   {char.relationships && char.relationships.length > 0 && (
-                    <div style={{ marginTop: '10px' }}>
-                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>
-                        Relationships ({char.relationships.length}):
+                    <div style={{ marginTop: '12px' }}>
+                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '8px' }}>
+                        관계 ({char.relationships.length}):
                       </p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {char.relationships.slice(0, 3).map((rel, idx) => {
                           const sentimentColor =
                             rel.sentiment === 'positive' ? '#22c55e' :
@@ -138,25 +138,39 @@ export default function GlossaryPanel({
                             '#6b7280';
                           return (
                             <div key={idx} style={{
-                              fontSize: '12px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '5px'
+                              background: '#f9fafb',
+                              padding: '8px 10px',
+                              borderRadius: '8px',
+                              borderLeft: `3px solid ${sentimentColor}`
                             }}>
                               <div style={{
-                                width: '8px',
-                                height: '8px',
-                                borderRadius: '50%',
-                                background: sentimentColor
-                              }} />
-                              <span style={{ fontWeight: '600' }}>{rel.character_name}</span>
-                              <span style={{ color: '#888' }}>·</span>
-                              <span style={{ color: '#666' }}>{rel.relationship_type}</span>
+                                fontSize: '13px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                marginBottom: '4px'
+                              }}>
+                                <span style={{ fontWeight: '700', color: '#333' }}>{rel.character_name}</span>
+                                <span style={{ color: '#888' }}>·</span>
+                                <span style={{ color: sentimentColor, fontWeight: '600' }}>{rel.relationship_type}</span>
+                              </div>
+                              {rel.description && (
+                                <div style={{
+                                  fontSize: '11px',
+                                  color: '#666',
+                                  lineHeight: '1.4',
+                                  marginTop: '4px'
+                                }}>
+                                  {rel.description.length > 80
+                                    ? rel.description.substring(0, 80) + '...'
+                                    : rel.description}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
                         {char.relationships.length > 3 && (
-                          <span style={{ fontSize: '11px', color: '#888' }}>
+                          <span style={{ fontSize: '11px', color: '#888', paddingLeft: '10px' }}>
                             +{char.relationships.length - 3} more
                           </span>
                         )}
