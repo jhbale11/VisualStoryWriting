@@ -7,7 +7,7 @@ export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const defaultKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || 'AIzaSyBxsk-0cTiH7XChhUsLvHevygJsLuH3ccA';
+  const defaultKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
   const [accessKey, setAccessKey] = useState(defaultKey);
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunksState] = useState(0);
