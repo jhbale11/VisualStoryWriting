@@ -1,4 +1,5 @@
-import { Background, BackgroundVariant, Controls, Edge, MarkerType, Node, ReactFlow, useReactFlow } from '@xyflow/react';
+import { Background, BackgroundVariant, Controls, Edge, MarkerType, Node, ReactFlow, applyNodeChanges } from '@xyflow/react';
+import RelationshipEdgeComponent from './RelationshipEdgeComponent';
 import '@xyflow/react/dist/style.css';
 import { useEffect, useState } from 'react';
 import { GlossaryCharacter } from '../../model/GlossaryModel';
@@ -72,6 +73,12 @@ export default function CharacterRelationshipGraph({
   const [nodes, setNodes] = useState<CharacterNode[]>([]);
   const [edges, setEdges] = useState<RelationshipEdge[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<RelationshipEdge | null>(null);
+  const [positions, setPositions] = useState<Record<string, { x: number, y: number }>>(() => {
+    try {
+      const raw = localStorage.getItem('vsw.relations.positions') || '{}';
+      return JSON.parse(raw);
+    } catch { return {}; }
+  });
 
   useEffect(() => {
     if (characters.length === 0) {
@@ -85,9 +92,10 @@ export default function CharacterRelationshipGraph({
     const radius = Math.min(250, 150 + characters.length * 20);
 
     const characterNodes: CharacterNode[] = characters.map((char, index) => {
-      const angle = (index / characters.length) * 2 * Math.PI - Math.PI / 2;
-      const x = centerX + radius * Math.cos(angle);
-      const y = centerY + radius * Math.sin(angle);
+      const saved = positions[char.id];
+      const angle = (index / Math.max(characters.length,1)) * 2 * Math.PI - Math.PI / 2;
+      const x = saved ? saved.x : centerX + radius * Math.cos(angle);
+      const y = saved ? saved.y : centerY + radius * Math.sin(angle);
 
       const relationshipCount = char.relationships?.length || 0;
       const isSelected = char.id === selectedCharacterId;
@@ -178,7 +186,7 @@ export default function CharacterRelationshipGraph({
               source: char.id,
               target: targetChar.id,
               label: rel.relationship_type,
-              animated: sentiment !== 'neutral',
+              animated: false,
               style: {
                 stroke: color,
                 strokeWidth: sentiment === 'neutral' ? 2.5 : 3.5,
@@ -191,8 +199,6 @@ export default function CharacterRelationshipGraph({
               labelBgStyle: {
                 fill: 'white',
                 fillOpacity: 0.95,
-                rx: 6,
-                ry: 6,
               },
               labelBgPadding: [10, 8],
               markerEnd: {
@@ -222,6 +228,23 @@ export default function CharacterRelationshipGraph({
     setEdges(relationshipEdges);
   }, [characters, selectedCharacterId]);
 
+  const onNodesChange = (changes: any) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+    const moved = changes.filter((c: any) => c.type === 'position' && c.position);
+    if (moved.length > 0) {
+      setPositions((prev) => {
+        const next = { ...prev };
+        moved.forEach((m: any) => {
+          next[m.id] = { x: m.position.x, y: m.position.y };
+        });
+        try { localStorage.setItem('vsw.relations.positions', JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
+  };
+
+  const edgeTypes = { relationshipEdge: RelationshipEdgeComponent as any };
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       {characters.length === 0 ? (
@@ -238,12 +261,16 @@ export default function CharacterRelationshipGraph({
       ) : (
         <ReactFlow
           nodes={nodes}
-          edges={edges}
+          edges={edges.map(e => ({ ...e, type: 'relationshipEdge' }))}
+          nodesDraggable
+          nodesConnectable={false}
+          onNodesChange={onNodesChange}
           onNodeClick={(_, node) => {
             const charNode = node as CharacterNode;
             onCharacterSelect(charNode.data.character);
             setSelectedEdge(null);
           }}
+          edgeTypes={edgeTypes as any}
           onEdgeClick={(_, edge) => {
             setSelectedEdge(edge as RelationshipEdge);
           }}

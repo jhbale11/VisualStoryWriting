@@ -6,6 +6,7 @@ import StudyInterface from './study/StudyInterface';
 import { useStudyStore } from './study/StudyModel';
 import GlossaryBuilder from './view/GlossaryBuilder';
 import GlossaryUploader from './view/GlossaryUploader';
+import ProjectManager from './view/ProjectManager';
 import GlossaryViewer from './view/GlossaryViewer';
 import Launcher from './view/Launcher';
 import VisualWritingInterface from './view/VisualWritingInterface';
@@ -45,6 +46,10 @@ function App() {
     },
     {
       path: '/',
+      element: <ProjectManager />
+    },
+    {
+      path: 'glossary-uploader',
       element: <GlossaryUploader />
     }
   ],

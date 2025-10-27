@@ -1,7 +1,7 @@
-import { Card, CardBody, CardHeader, Chip, Divider, Input } from '@nextui-org/react';
+import { Card, CardBody, CardHeader, Chip, Divider, Input, Textarea, Button, Select, SelectItem } from '@nextui-org/react';
 import { useState } from 'react';
-import { FiSearch } from 'react-icons/fi';
-import { GlossaryCharacter, GlossaryEvent } from '../../model/GlossaryModel';
+import { FiSearch, FiBook, FiMap, FiGrid, FiFileText, FiEdit3, FiFeather, FiPlus, FiTrash } from 'react-icons/fi';
+import { GlossaryCharacter, GlossaryEvent, useGlossaryStore, StorySummary, StyleGuide } from '../../model/GlossaryModel';
 
 interface Props {
   characters: GlossaryCharacter[];
@@ -21,7 +21,25 @@ export default function GlossaryPanel({
   onEventSelect,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'characters' | 'events'>('characters');
+  const [activeTab, setActiveTab] = useState<'characters' | 'events' | 'summary' | 'arcs' | 'style' | 'features'>('characters');
+  
+  const storySummary = useGlossaryStore((state) => state.story_summary);
+  const keyEvents = useGlossaryStore((state) => state.key_events_and_arcs);
+  const styleGuide = useGlossaryStore((state) => state.style_guide);
+  const worldBuildingNotes = useGlossaryStore((state) => state.world_building_notes);
+  const honorifics = useGlossaryStore((state) => state.honorifics);
+  const recurringPhrases = useGlossaryStore((state) => state.recurring_phrases);
+  const locations = useGlossaryStore((state) => state.locations);
+  const terms = useGlossaryStore((state) => state.terms);
+  
+  const updateStorySummary = useGlossaryStore((state) => state.updateStorySummary);
+  const updateStyleGuide = useGlossaryStore((state) => state.updateStyleGuide);
+  const addKeyEvent = useGlossaryStore((state) => state.addKeyEvent);
+  const updateKeyEvent = useGlossaryStore((state) => state.updateKeyEvent);
+  const deleteKeyEvent = useGlossaryStore((state) => state.deleteKeyEvent);
+  const addWorldBuildingNote = useGlossaryStore((state) => state.addWorldBuildingNote);
+  const updateWorldBuildingNote = useGlossaryStore((state) => state.updateWorldBuildingNote);
+  const deleteWorldBuildingNote = useGlossaryStore((state) => state.deleteWorldBuildingNote);
 
   const filteredCharacters = characters.filter((char) =>
     char.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -54,7 +72,16 @@ export default function GlossaryPanel({
           size="sm"
         />
 
-        <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '15px', flexWrap: 'wrap' }}>
+          <Chip
+            onClick={() => setActiveTab('summary')}
+            color={activeTab === 'summary' ? 'secondary' : 'default'}
+            variant={activeTab === 'summary' ? 'solid' : 'bordered'}
+            style={{ cursor: 'pointer' }}
+            startContent={<FiBook />}
+          >
+            Summary
+          </Chip>
           <Chip
             onClick={() => setActiveTab('characters')}
             color={activeTab === 'characters' ? 'secondary' : 'default'}
@@ -70,6 +97,33 @@ export default function GlossaryPanel({
             style={{ cursor: 'pointer' }}
           >
             Events ({events.length})
+          </Chip>
+          <Chip
+            onClick={() => setActiveTab('arcs')}
+            color={activeTab === 'arcs' ? 'secondary' : 'default'}
+            variant={activeTab === 'arcs' ? 'solid' : 'bordered'}
+            style={{ cursor: 'pointer' }}
+            startContent={<FiMap />}
+          >
+            Key Arcs ({keyEvents.length})
+          </Chip>
+          <Chip
+            onClick={() => setActiveTab('style')}
+            color={activeTab === 'style' ? 'secondary' : 'default'}
+            variant={activeTab === 'style' ? 'solid' : 'bordered'}
+            style={{ cursor: 'pointer' }}
+            startContent={<FiEdit3 />}
+          >
+            Style Guide
+          </Chip>
+          <Chip
+            onClick={() => setActiveTab('features')}
+            color={activeTab === 'features' ? 'secondary' : 'default'}
+            variant={activeTab === 'features' ? 'solid' : 'bordered'}
+            style={{ cursor: 'pointer' }}
+            startContent={<FiFeather />}
+          >
+            Story Features
           </Chip>
         </div>
       </div>
@@ -232,6 +286,578 @@ export default function GlossaryPanel({
                 </CardBody>
               </Card>
             ))}
+          </div>
+        )}
+
+        {activeTab === 'summary' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Story Summary</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ marginBottom: '15px' }}>
+                  <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Logline:</p>
+                  <p style={{ fontSize: '14px', color: '#333', fontStyle: storySummary.logline ? 'normal' : 'italic' }}>
+                    {storySummary.logline || 'No logline yet. Process text chunks to generate.'}
+                  </p>
+                </div>
+                <div>
+                  <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Blurb:</p>
+                  <p style={{ fontSize: '14px', color: '#333', lineHeight: '1.6', fontStyle: storySummary.blurb ? 'normal' : 'italic' }}>
+                    {storySummary.blurb || 'No blurb yet. Process text chunks to generate.'}
+                  </p>
+                </div>
+              </CardBody>
+            </Card>
+
+            {worldBuildingNotes.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>World Building</h3>
+                </CardHeader>
+                <Divider />
+                <CardBody>
+                  <ul style={{ paddingLeft: '20px', margin: 0 }}>
+                    {worldBuildingNotes.map((note, idx) => (
+                      <li key={idx} style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>
+                        {note}
+                      </li>
+                    ))}
+                  </ul>
+                </CardBody>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Locations ({locations.length})</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {locations.map((loc) => (
+                    <div key={loc.id} style={{ padding: '10px', background: '#f9fafb', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                        <span style={{ fontSize: '18px' }}>{loc.emoji}</span>
+                        <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{loc.name}</span>
+                        {loc.korean_name && (
+                          <span style={{ fontSize: '12px', color: '#888' }}>({loc.korean_name})</span>
+                        )}
+                      </div>
+                      {loc.description && (
+                        <p style={{ fontSize: '13px', color: '#666', marginBottom: '5px' }}>{loc.description}</p>
+                      )}
+                      {loc.atmosphere && (
+                        <Chip size="sm" variant="flat" color="secondary" style={{ marginTop: '5px' }}>
+                          {loc.atmosphere}
+                        </Chip>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Terms ({terms.length})</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {terms.map((term) => (
+                    <div key={term.id} style={{ padding: '10px', background: '#f9fafb', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{term.original}</span>
+                        <span style={{ color: '#888' }}>→</span>
+                        <span style={{ fontSize: '14px', color: '#667eea' }}>{term.translation}</span>
+                      </div>
+                      {term.context && (
+                        <p style={{ fontSize: '12px', color: '#666' }}>{term.context}</p>
+                      )}
+                      <Chip size="sm" variant="flat" style={{ marginTop: '5px' }}>
+                        {term.category}
+                      </Chip>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'arcs' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Key Story Arcs & Events</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                {keyEvents.length > 0 ? (
+                  <ol style={{ paddingLeft: '20px', margin: 0 }}>
+                    {keyEvents.map((event, idx) => (
+                      <li key={idx} style={{ fontSize: '14px', color: '#666', marginBottom: '12px', lineHeight: '1.5' }}>
+                        {event}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p style={{ fontSize: '14px', color: '#888', fontStyle: 'italic' }}>
+                    No key events yet. Process text chunks to generate.
+                  </p>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'style' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Genre & Tone</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Genre:</p>
+                    <Chip color="secondary" variant="flat">{styleGuide.genre || 'Web Novel'}</Chip>
+                  </div>
+                  {styleGuide.sub_genres && styleGuide.sub_genres.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Sub-genres:</p>
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                        {styleGuide.sub_genres.map((genre, idx) => (
+                          <Chip key={idx} size="sm" variant="bordered">{genre}</Chip>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Tone:</p>
+                    <p style={{ fontSize: '14px', color: '#333' }}>{styleGuide.tone || 'Standard'}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Content Rating:</p>
+                    <Chip size="sm" variant="flat">{styleGuide.content_rating || 'Teen'}</Chip>
+                  </div>
+                  {styleGuide.themes && styleGuide.themes.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Themes:</p>
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                        {styleGuide.themes.map((theme, idx) => (
+                          <Chip key={idx} size="sm" color="secondary" variant="flat">{theme}</Chip>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Translation Guidelines</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Name Format:</p>
+                    <p style={{ fontSize: '14px', color: '#333' }}>{styleGuide.name_format || 'english_given_name english_surname'}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Honorific Usage:</p>
+                    <p style={{ fontSize: '14px', color: '#666', lineHeight: '1.6' }}>{styleGuide.honorific_usage || 'Keep Korean honorifics with explanation on first use'}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Formality Level:</p>
+                    <Chip size="sm" variant="flat">{styleGuide.formality_level || 'medium'}</Chip>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Dialogue Style:</p>
+                    <p style={{ fontSize: '14px', color: '#333' }}>{styleGuide.dialogue_style || 'natural'}</p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            {styleGuide.narrative_style && (
+              <Card>
+                <CardHeader>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Narrative Style</h3>
+                </CardHeader>
+                <Divider />
+                <CardBody>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '15px' }}>
+                      <div>
+                        <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>POV:</p>
+                        <Chip size="sm" variant="flat">{styleGuide.narrative_style.point_of_view || 'third-person'}</Chip>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Tense:</p>
+                        <Chip size="sm" variant="flat">{styleGuide.narrative_style.tense || 'past'}</Chip>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Voice:</p>
+                        <Chip size="sm" variant="flat">{styleGuide.narrative_style.voice || 'neutral'}</Chip>
+                      </div>
+                    </div>
+                    {styleGuide.narrative_style.common_expressions && styleGuide.narrative_style.common_expressions.length > 0 && (
+                      <div>
+                        <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Common Expressions:</p>
+                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                          {styleGuide.narrative_style.common_expressions.map((expr, idx) => (
+                            <Chip key={idx} size="sm" variant="bordered">{expr}</Chip>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {styleGuide.narrative_style.atmosphere_descriptors && styleGuide.narrative_style.atmosphere_descriptors.length > 0 && (
+                      <div>
+                        <p style={{ fontSize: '12px', color: '#888', fontWeight: 'bold', marginBottom: '5px' }}>Atmosphere:</p>
+                        <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                          {styleGuide.narrative_style.atmosphere_descriptors.map((desc, idx) => (
+                            <Chip key={idx} size="sm" color="secondary" variant="flat">{desc}</Chip>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {Object.keys(honorifics).length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Honorifics</h3>
+                </CardHeader>
+                <Divider />
+                <CardBody>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {Object.entries(honorifics).map(([korean, english], idx) => (
+                      <div key={idx} style={{ padding: '10px', background: '#f9fafb', borderRadius: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{korean}</span>
+                          <span style={{ color: '#888' }}>→</span>
+                          <span style={{ fontSize: '13px', color: '#666' }}>{english}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {Object.keys(recurringPhrases).length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Recurring Phrases</h3>
+                </CardHeader>
+                <Divider />
+                <CardBody>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {Object.entries(recurringPhrases).map(([korean, english], idx) => (
+                      <div key={idx} style={{ padding: '10px', background: '#f9fafb', borderRadius: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{korean}</span>
+                          <span style={{ color: '#888' }}>→</span>
+                          <span style={{ fontSize: '13px', color: '#667eea' }}>{english}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'features' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Story Summary (작품 요약)</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <Textarea
+                    label="Logline (한 문장 요약)"
+                    value={storySummary.logline}
+                    onChange={(e) => updateStorySummary({ logline: e.target.value })}
+                    placeholder="A one-sentence, tantalizing summary of the entire story."
+                    minRows={2}
+                  />
+                  <Textarea
+                    label="Blurb (뒷표지 소개)"
+                    value={storySummary.blurb}
+                    onChange={(e) => updateStorySummary({ blurb: e.target.value })}
+                    placeholder="A short, enticing paragraph describing the main plot, core conflict, and stakes."
+                    minRows={4}
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Key Story Arcs (주요 스토리 아크)</h3>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    startContent={<FiPlus />}
+                    onPress={() => addKeyEvent('New key event')}
+                  >
+                    Add Event
+                  </Button>
+                </div>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {keyEvents.map((event, index) => (
+                    <div key={index} style={{ display: 'flex', gap: '10px', alignItems: 'start' }}>
+                      <Textarea
+                        value={event}
+                        onChange={(e) => updateKeyEvent(index, e.target.value)}
+                        minRows={2}
+                        style={{ flex: 1 }}
+                      />
+                      <Button
+                        size="sm"
+                        isIconOnly
+                        variant="flat"
+                        color="danger"
+                        onPress={() => deleteKeyEvent(index)}
+                      >
+                        <FiTrash />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>World Building Notes (세계관 노트)</h3>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    startContent={<FiPlus />}
+                    onPress={() => addWorldBuildingNote('New world building note')}
+                  >
+                    Add Note
+                  </Button>
+                </div>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {worldBuildingNotes.map((note, index) => (
+                    <div key={index} style={{ display: 'flex', gap: '10px', alignItems: 'start' }}>
+                      <Textarea
+                        value={note}
+                        onChange={(e) => updateWorldBuildingNote(index, e.target.value)}
+                        minRows={2}
+                        style={{ flex: 1 }}
+                      />
+                      <Button
+                        size="sm"
+                        isIconOnly
+                        variant="flat"
+                        color="danger"
+                        onPress={() => deleteWorldBuildingNote(index)}
+                      >
+                        <FiTrash />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Style & Genre (스타일 & 장르)</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <Input
+                      label="Genre (장르)"
+                      value={styleGuide.genre || ''}
+                      onChange={(e) => updateStyleGuide({ genre: e.target.value })}
+                      placeholder="e.g., School Life, Fantasy, Romance"
+                    />
+                    <Input
+                      label="Content Rating"
+                      value={styleGuide.content_rating || ''}
+                      onChange={(e) => updateStyleGuide({ content_rating: e.target.value })}
+                      placeholder="e.g., Teen, Young Adult, Mature"
+                    />
+                  </div>
+
+                  <Textarea
+                    label="Sub-genres (하위 장르, comma-separated)"
+                    value={styleGuide.sub_genres?.join(', ') || ''}
+                    onChange={(e) => updateStyleGuide({ sub_genres: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    placeholder="e.g., slice of life, drama, action"
+                    minRows={2}
+                  />
+
+                  <Textarea
+                    label="Themes (테마, comma-separated)"
+                    value={styleGuide.themes?.join(', ') || ''}
+                    onChange={(e) => updateStyleGuide({ themes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                    placeholder="e.g., coming of age, friendship, competition"
+                    minRows={2}
+                  />
+
+                  <Textarea
+                    label="Tone (톤)"
+                    value={styleGuide.tone || ''}
+                    onChange={(e) => updateStyleGuide({ tone: e.target.value })}
+                    placeholder="e.g., Serious with occasional humor"
+                    minRows={2}
+                  />
+
+                  <Input
+                    label="Formality Level"
+                    value={styleGuide.formality_level || ''}
+                    onChange={(e) => updateStyleGuide({ formality_level: e.target.value })}
+                    placeholder="e.g., high, medium, low"
+                  />
+
+                  <Input
+                    label="Dialogue Style"
+                    value={styleGuide.dialogue_style || ''}
+                    onChange={(e) => updateStyleGuide({ dialogue_style: e.target.value })}
+                    placeholder="e.g., natural and age-appropriate"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Translation Guidelines (번역 가이드)</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <Input
+                    label="Name Format"
+                    value={styleGuide.name_format || ''}
+                    onChange={(e) => updateStyleGuide({ name_format: e.target.value })}
+                    placeholder="e.g., english_given_name english_surname"
+                  />
+
+                  <Textarea
+                    label="Honorific Usage"
+                    value={styleGuide.honorific_usage || ''}
+                    onChange={(e) => updateStyleGuide({ honorific_usage: e.target.value })}
+                    placeholder="Guidelines for translating Korean honorifics"
+                    minRows={3}
+                  />
+
+                  <Textarea
+                    label="Formal Speech Level"
+                    value={styleGuide.formal_speech_level || ''}
+                    onChange={(e) => updateStyleGuide({ formal_speech_level: e.target.value })}
+                    placeholder="How to match English formality to Korean speech levels"
+                    minRows={2}
+                  />
+
+                  <Input
+                    label="Narrative Vocabulary"
+                    value={styleGuide.narrative_vocabulary || ''}
+                    onChange={(e) => updateStyleGuide({ narrative_vocabulary: e.target.value })}
+                    placeholder="e.g., medium, elevate where necessary"
+                  />
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Narrative Style (서술 스타일)</h3>
+              </CardHeader>
+              <Divider />
+              <CardBody>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                    <Select
+                      label="Point of View"
+                      selectedKeys={styleGuide.narrative_style?.point_of_view ? [styleGuide.narrative_style.point_of_view] : []}
+                      onChange={(e) => updateStyleGuide({
+                        narrative_style: { ...styleGuide.narrative_style, point_of_view: e.target.value }
+                      })}
+                    >
+                      <SelectItem key="first-person" value="first-person">1st Person</SelectItem>
+                      <SelectItem key="second-person" value="second-person">2nd Person</SelectItem>
+                      <SelectItem key="third-person" value="third-person">3rd Person</SelectItem>
+                    </Select>
+
+                    <Select
+                      label="Tense"
+                      selectedKeys={styleGuide.narrative_style?.tense ? [styleGuide.narrative_style.tense] : []}
+                      onChange={(e) => updateStyleGuide({
+                        narrative_style: { ...styleGuide.narrative_style, tense: e.target.value }
+                      })}
+                    >
+                      <SelectItem key="past" value="past">Past</SelectItem>
+                      <SelectItem key="present" value="present">Present</SelectItem>
+                    </Select>
+
+                    <Input
+                      label="Voice"
+                      value={styleGuide.narrative_style?.voice || ''}
+                      onChange={(e) => updateStyleGuide({
+                        narrative_style: { ...styleGuide.narrative_style, voice: e.target.value }
+                      })}
+                      placeholder="e.g., introspective"
+                    />
+                  </div>
+
+                  <Textarea
+                    label="Common Expressions (comma-separated)"
+                    value={styleGuide.narrative_style?.common_expressions?.join(', ') || ''}
+                    onChange={(e) => updateStyleGuide({
+                      narrative_style: {
+                        ...styleGuide.narrative_style,
+                        common_expressions: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      }
+                    })}
+                    placeholder="e.g., 그때, 그 순간"
+                    minRows={2}
+                  />
+
+                  <Textarea
+                    label="Atmosphere Descriptors (comma-separated)"
+                    value={styleGuide.narrative_style?.atmosphere_descriptors?.join(', ') || ''}
+                    onChange={(e) => updateStyleGuide({
+                      narrative_style: {
+                        ...styleGuide.narrative_style,
+                        atmosphere_descriptors: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      }
+                    })}
+                    placeholder="e.g., tense, melancholic, warm"
+                    minRows={2}
+                  />
+                </div>
+              </CardBody>
+            </Card>
           </div>
         )}
       </div>

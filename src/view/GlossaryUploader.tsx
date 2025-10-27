@@ -1,4 +1,4 @@
-import { Button, Card, CardBody, CardHeader, Divider, Progress } from "@nextui-org/react";
+import { Button, Card, CardBody, CardHeader, Divider, Progress, Select, SelectItem } from "@nextui-org/react";
 import { useState } from "react";
 import { FiUpload } from "react-icons/fi";
 import { initGemini, useGlossaryStore } from '../model/GlossaryModel';
@@ -7,10 +7,12 @@ export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [accessKey, setAccessKey] = useState('');
+  const defaultKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || 'AIzaSyBxsk-0cTiH7XChhUsLvHevygJsLuH3ccA';
+  const [accessKey, setAccessKey] = useState(defaultKey);
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunksState] = useState(0);
   const [isConsolidating, setIsConsolidating] = useState(false);
+  const [targetLanguage, setTargetLanguage] = useState<'en' | 'ja'>('en');
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -22,9 +24,10 @@ export default function GlossaryUploader() {
   };
 
   const processText = async () => {
-    if (!file || !accessKey) return;
+    if (!file) return;
 
-    initGemini(accessKey);
+    const keyToUse = accessKey || defaultKey;
+    initGemini(keyToUse);
 
     setIsProcessing(true);
     setProgress(0);
@@ -34,7 +37,7 @@ export default function GlossaryUploader() {
     reader.onload = async (e) => {
       const text = e.target?.result as string;
 
-      const chunkSize = 8000;
+      const chunkSize = 10000;
       const chunks: string[] = [];
 
       for (let i = 0; i < text.length; i += chunkSize) {
@@ -44,6 +47,12 @@ export default function GlossaryUploader() {
       setTotalChunksState(chunks.length);
 
       useGlossaryStore.getState().reset();
+      useGlossaryStore.getState().setTargetLanguage(targetLanguage);
+      // Also reset the editing model to avoid stale demo content bleeding into view
+      try {
+        const { useModelStore } = await import('../model/Model');
+        useModelStore.getState().reset();
+      } catch {}
       useGlossaryStore.getState().setFullText(text);
       useGlossaryStore.getState().setTotalChunks(chunks.length);
 
@@ -74,7 +83,36 @@ export default function GlossaryUploader() {
       setIsProcessing(false);
 
       setTimeout(() => {
-        window.location.hash = '/glossary-builder' + `?k=${btoa(accessKey)}`;
+        try {
+          const id = (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`);
+          const name = file?.name ? `${file.name.replace(/\.[^/.]+$/, '')} (${new Date().toLocaleString()})` : `Project ${new Date().toLocaleString()}`;
+          const raw = localStorage.getItem('vsw.projects') || '[]';
+          const arr = JSON.parse(raw);
+          const project = {
+            id,
+            name,
+            updatedAt: Date.now(),
+            glossary: {
+              characters: useGlossaryStore.getState().characters,
+              events: useGlossaryStore.getState().events,
+              locations: useGlossaryStore.getState().locations,
+              terms: useGlossaryStore.getState().terms,
+              fullText: useGlossaryStore.getState().fullText,
+            },
+            view: {
+              entityNodes: [],
+              actionEdges: [],
+              locationNodes: [],
+              textState: [],
+              isReadOnly: false,
+              relationsPositions: {}
+            }
+          } as any;
+          const next = [project, ...arr];
+          localStorage.setItem('vsw.projects', JSON.stringify(next));
+          localStorage.setItem('vsw.currentProjectId', id);
+        } catch {}
+        window.location.hash = '/glossary-builder' + `?k=${btoa(keyToUse)}`;
       }, 500);
     };
 
@@ -91,19 +129,7 @@ export default function GlossaryUploader() {
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       position: 'relative'
     }}>
-      <a
-        href="#/launcher"
-        style={{
-          position: 'absolute',
-          top: '20px',
-          right: '20px',
-          color: 'white',
-          textDecoration: 'underline',
-          fontSize: '14px'
-        }}
-      >
-        Access Legacy Interface
-      </a>
+      
       <Card style={{ width: '500px', padding: '20px' }}>
         <CardHeader>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -139,6 +165,28 @@ export default function GlossaryUploader() {
             />
             <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>
               Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>
+              {defaultKey && <span> · Using default key unless overridden</span>}
+            </p>
+          </div>
+
+          <div>
+            <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
+              Target Language (번역 목표 언어)
+            </label>
+            <Select
+              placeholder="Select a language"
+              selectedKeys={[targetLanguage]}
+              onChange={(e) => setTargetLanguage(e.target.value as 'en' | 'ja')}
+            >
+              <SelectItem key="en" value="en">
+                English (영어)
+              </SelectItem>
+              <SelectItem key="ja" value="ja">
+                Japanese (日本語)
+              </SelectItem>
+            </Select>
+            <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>
+              Korean names will be kept, but all other fields will be in the selected language
             </p>
           </div>
 
@@ -215,7 +263,7 @@ export default function GlossaryUploader() {
             color="secondary"
             size="lg"
             onClick={processText}
-            isDisabled={!file || !accessKey || isProcessing}
+            isDisabled={!file || isProcessing}
             isLoading={isProcessing}
             style={{ width: '100%' }}
           >

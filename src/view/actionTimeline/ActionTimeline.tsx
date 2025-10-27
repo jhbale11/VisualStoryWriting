@@ -218,7 +218,7 @@ export default function ActionTimeline() {
       </Button>
       </div>
     </div>
-      <div style={{ width: '100%', height: 300 }}>
+      <div style={{ width: '100%', height: '100%' }}>
         <ReactFlow
           onMouseMove={(e) => {
             const pos = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY }, { snapToGrid: false })
