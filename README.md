@@ -70,8 +70,13 @@ This application features an intelligent glossary builder that analyzes uploaded
 ### 🚀 How to Use
 
 1. **Initial Setup**
+   - Create a `.env` file in the root directory
+   - Add your **Google Gemini API key**:
+     ```
+     VITE_GEMINI_API_KEY=your_api_key_here
+     ```
+   - Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
    - Open the application
-   - Enter your **Google Gemini API key** (get from [Google AI Studio](https://aistudio.google.com/app/apikey))
    - Upload a .txt file of your novel
 
 2. **Processing**
@@ -178,24 +183,36 @@ The system relies on a GPT-4o to extract the information from the text and sugge
 
 ## How to build and run
 The code is written in TypeScript and uses React and Vite. To build and run the code, you will need to have Node.js installed on your machine. You can download it [here](https://nodejs.org/en/download/).
-First install the dependencies:
-```bash
-npm install
-```
-Then build the code:
-```bash
-npm run dev
-```
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Set up environment variables:**
+   - Copy `.env.example` to `.env`:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `.env` and add your Gemini API key:
+     ```
+     VITE_GEMINI_API_KEY=your_api_key_here
+     ```
+
+3. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
 
 
 ## How to use?
-After entering your Gemini API key, upload a .txt file to build a comprehensive glossary with visual representations.
+After setting up your Gemini API key in the `.env` file, upload a .txt file to build a comprehensive glossary with visual representations.
 Note that the system was tested and developped for recent versions of **Google Chrome** or **Mozilla Firefox**.
 
 
 ## How to get a Gemini API key?
 The new glossary builder uses Google Gemini 2.0 Flash for AI-powered extraction. You will need a key to make it work. Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-Your key is never stored and the application runs locally and sends requests to the Gemini API only.
+Your key is stored securely in your local `.env` file and never uploaded anywhere. The application runs locally and sends requests directly to the Gemini API only.
 
 
 ## Where are the video tutorials?

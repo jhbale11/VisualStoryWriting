@@ -7,8 +7,7 @@ export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const defaultKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
-  const [accessKey, setAccessKey] = useState(defaultKey);
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunksState] = useState(0);
   const [isConsolidating, setIsConsolidating] = useState(false);
@@ -26,8 +25,12 @@ export default function GlossaryUploader() {
   const processText = async () => {
     if (!file) return;
 
-    const keyToUse = accessKey || defaultKey;
-    initGemini(keyToUse);
+    if (!apiKey) {
+      alert('API Key not found. Please add VITE_GEMINI_API_KEY to your .env file.');
+      return;
+    }
+
+    initGemini(apiKey);
 
     setIsProcessing(true);
     setProgress(0);
@@ -112,7 +115,7 @@ export default function GlossaryUploader() {
           localStorage.setItem('vsw.projects', JSON.stringify(next));
           localStorage.setItem('vsw.currentProjectId', id);
         } catch {}
-        window.location.hash = '/glossary-builder' + `?k=${btoa(keyToUse)}`;
+        window.location.hash = '/glossary-builder';
       }, 500);
     };
 
@@ -144,30 +147,15 @@ export default function GlossaryUploader() {
             The system will build a comprehensive glossary with visual representations.
           </p>
 
-          <div>
-            <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
-              Gemini API Key
-            </label>
-            <input
-              type="text"
-              placeholder="AIza..."
-              value={accessKey}
-              onChange={(e) => {
-                setAccessKey(e.target.value);
-              }}
-              style={{
-                width: '100%',
-                padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px'
-              }}
-            />
-            <p style={{ fontSize: '12px', color: '#888', marginTop: '5px' }}>
-              Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>
-              {defaultKey && <span> · Using default key unless overridden</span>}
-            </p>
-          </div>
+          {!apiKey && (
+            <div style={{ padding: '10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '8px' }}>
+              <p style={{ fontSize: '14px', color: '#856404', margin: 0 }}>
+                ⚠️ API Key not found. Please create a <code>.env</code> file with <code>VITE_GEMINI_API_KEY</code>.
+                <br />
+                Get your API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>
+              </p>
+            </div>
+          )}
 
           <div>
             <label style={{ fontWeight: 'bold', marginBottom: '5px', display: 'block' }}>
@@ -263,7 +251,7 @@ export default function GlossaryUploader() {
             color="secondary"
             size="lg"
             onClick={processText}
-            isDisabled={!file || isProcessing}
+            isDisabled={!file || isProcessing || !apiKey}
             isLoading={isProcessing}
             style={{ width: '100%' }}
           >
