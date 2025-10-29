@@ -746,6 +746,14 @@ export default function GlossaryBuilder() {
   const glossaryEvents = useGlossaryStore(state => state.events);
   const glossaryLocations = useGlossaryStore(state => state.locations);
   const glossaryTerms = useGlossaryStore(state => state.terms);
+  const storySummary = useGlossaryStore(state => state.story_summary);
+  const keyEvents = useGlossaryStore(state => state.key_events_and_arcs);
+  const honorifics = useGlossaryStore(state => state.honorifics);
+  const recurringPhrases = useGlossaryStore(state => state.recurring_phrases);
+  const worldBuildingNotes = useGlossaryStore(state => state.world_building_notes);
+  const styleGuide = useGlossaryStore(state => state.style_guide);
+  const targetLanguage = useGlossaryStore(state => state.target_language);
+  const fullText = useGlossaryStore(state => state.fullText);
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
@@ -756,6 +764,57 @@ export default function GlossaryBuilder() {
   const setEntityNodes = useModelStore(state => state.setEntityNodes);
   const setActionEdges = useModelStore(state => state.setActionEdges);
   const setLocationNodes = useModelStore(state => state.setLocationNodes);
+
+  // Load project data on mount
+  useEffect(() => {
+    try {
+      const currentId = localStorage.getItem('vsw.currentProjectId');
+      if (currentId) {
+        const raw = localStorage.getItem('vsw.projects') || '[]';
+        const arr = JSON.parse(raw);
+        const project = arr.find((p: any) => p.id === currentId);
+        
+        if (project && project.glossary) {
+          // Load glossary data
+          useGlossaryStore.setState({
+            characters: project.glossary.characters || [],
+            events: project.glossary.events || [],
+            locations: project.glossary.locations || [],
+            terms: project.glossary.terms || [],
+            fullText: project.glossary.fullText || '',
+            story_summary: project.glossary.story_summary || { logline: '', blurb: '' },
+            key_events_and_arcs: project.glossary.key_events_and_arcs || [],
+            honorifics: project.glossary.honorifics || {},
+            recurring_phrases: project.glossary.recurring_phrases || {},
+            world_building_notes: project.glossary.world_building_notes || [],
+            style_guide: project.glossary.style_guide || {
+              tone: '',
+              formality_level: 'medium',
+              themes: [],
+              genre: '',
+              sub_genres: [],
+              content_rating: '',
+              name_format: '',
+              honorific_usage: '',
+              formal_speech_level: '',
+              dialogue_style: '',
+              narrative_vocabulary: '',
+              narrative_style: {
+                point_of_view: '',
+                tense: '',
+                voice: '',
+                common_expressions: [],
+                atmosphere_descriptors: []
+              }
+            },
+            target_language: project.glossary.target_language || 'en',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load project:', error);
+    }
+  }, []);
 
   useEffect(() => {
     if ((glossaryCharacters.length > 0 || glossaryEvents.length > 0) &&
@@ -786,6 +845,68 @@ export default function GlossaryBuilder() {
     LayoutUtils.optimizeNodeLayout('entity', useModelStore.getState().entityNodes, useModelStore.getState().setEntityNodes, center, 120, 100);
     LayoutUtils.optimizeNodeLayout('location', useModelStore.getState().locationNodes, useModelStore.getState().setLocationNodes, center, 120);
   }, [selectedTab]);
+
+  // Auto-save on glossary changes
+  useEffect(() => {
+    const saveTimer = setTimeout(() => {
+      try {
+        const currentId = localStorage.getItem('vsw.currentProjectId');
+        if (!currentId) return; // Don't auto-save if no project is selected
+
+        const raw = localStorage.getItem('vsw.projects') || '[]';
+        const arr = JSON.parse(raw);
+        const projectIndex = arr.findIndex((p: any) => p.id === currentId);
+        
+        if (projectIndex >= 0) {
+          const glossaryState = useGlossaryStore.getState();
+          arr[projectIndex] = {
+            ...arr[projectIndex],
+            updatedAt: Date.now(),
+            glossary: {
+              characters: glossaryState.characters,
+              events: glossaryState.events,
+              locations: glossaryState.locations,
+              terms: glossaryState.terms,
+              fullText: glossaryState.fullText,
+              story_summary: glossaryState.story_summary,
+              key_events_and_arcs: glossaryState.key_events_and_arcs,
+              honorifics: glossaryState.honorifics,
+              recurring_phrases: glossaryState.recurring_phrases,
+              world_building_notes: glossaryState.world_building_notes,
+              style_guide: glossaryState.style_guide,
+              target_language: glossaryState.target_language,
+            },
+            view: {
+              entityNodes: useModelStore.getState().entityNodes,
+              actionEdges: useModelStore.getState().actionEdges,
+              locationNodes: useModelStore.getState().locationNodes,
+              textState: useModelStore.getState().textState,
+              isReadOnly: useModelStore.getState().isReadOnly,
+              relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}')
+            }
+          };
+          localStorage.setItem('vsw.projects', JSON.stringify(arr));
+        }
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    }, 1000); // Debounce for 1 second
+
+    return () => clearTimeout(saveTimer);
+  }, [
+    glossaryCharacters, 
+    glossaryEvents, 
+    glossaryLocations, 
+    glossaryTerms, 
+    storySummary,
+    keyEvents,
+    honorifics,
+    recurringPhrases,
+    worldBuildingNotes,
+    styleGuide,
+    targetLanguage,
+    fullText
+  ]);
 
   const handleExport = () => {
     const json = exportToJSON();
@@ -856,17 +977,25 @@ export default function GlossaryBuilder() {
             const raw = localStorage.getItem('vsw.projects') || '[]';
             const arr = JSON.parse(raw);
             const currentId = localStorage.getItem('vsw.currentProjectId');
+            const glossaryState = useGlossaryStore.getState();
 
             const snapshot = {
               id: currentId || (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`),
               name: (arr.find((p: any) => p.id === currentId)?.name) || `Project ${new Date().toLocaleString()}`,
               updatedAt: Date.now(),
               glossary: {
-                characters: useGlossaryStore.getState().characters,
-                events: useGlossaryStore.getState().events,
-                locations: useGlossaryStore.getState().locations,
-                terms: useGlossaryStore.getState().terms,
-                fullText: useGlossaryStore.getState().fullText,
+                characters: glossaryState.characters,
+                events: glossaryState.events,
+                locations: glossaryState.locations,
+                terms: glossaryState.terms,
+                fullText: glossaryState.fullText,
+                story_summary: glossaryState.story_summary,
+                key_events_and_arcs: glossaryState.key_events_and_arcs,
+                honorifics: glossaryState.honorifics,
+                recurring_phrases: glossaryState.recurring_phrases,
+                world_building_notes: glossaryState.world_building_notes,
+                style_guide: glossaryState.style_guide,
+                target_language: glossaryState.target_language,
               },
               view: {
                 entityNodes: useModelStore.getState().entityNodes,

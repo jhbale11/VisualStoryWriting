@@ -19,6 +19,13 @@ function getGlossarySnapshot() {
     locations: s.locations,
     terms: s.terms,
     fullText: s.fullText,
+    story_summary: s.story_summary,
+    key_events_and_arcs: s.key_events_and_arcs,
+    honorifics: s.honorifics,
+    recurring_phrases: s.recurring_phrases,
+    world_building_notes: s.world_building_notes,
+    style_guide: s.style_guide,
+    target_language: s.target_language,
   };
 }
 
@@ -35,11 +42,37 @@ function getViewSnapshot() {
 
 function loadGlossarySnapshot(snapshot: ReturnType<typeof getGlossarySnapshot>) {
   useGlossaryStore.setState({
-    characters: snapshot.characters,
-    events: snapshot.events,
-    locations: snapshot.locations,
-    terms: snapshot.terms,
-    fullText: snapshot.fullText,
+    characters: snapshot.characters || [],
+    events: snapshot.events || [],
+    locations: snapshot.locations || [],
+    terms: snapshot.terms || [],
+    fullText: snapshot.fullText || '',
+    story_summary: snapshot.story_summary || { logline: '', blurb: '' },
+    key_events_and_arcs: snapshot.key_events_and_arcs || [],
+    honorifics: snapshot.honorifics || {},
+    recurring_phrases: snapshot.recurring_phrases || {},
+    world_building_notes: snapshot.world_building_notes || [],
+    style_guide: snapshot.style_guide || {
+      tone: '',
+      formality_level: 'medium',
+      themes: [],
+      genre: '',
+      sub_genres: [],
+      content_rating: '',
+      name_format: '',
+      honorific_usage: '',
+      formal_speech_level: '',
+      dialogue_style: '',
+      narrative_vocabulary: '',
+      narrative_style: {
+        point_of_view: '',
+        tense: '',
+        voice: '',
+        common_expressions: [],
+        atmosphere_descriptors: []
+      }
+    },
+    target_language: snapshot.target_language || 'en',
   });
 }
 
