@@ -10,12 +10,18 @@ import ProjectManager from './view/ProjectManager';
 import GlossaryViewer from './view/GlossaryViewer';
 import Launcher from './view/Launcher';
 import VisualWritingInterface from './view/VisualWritingInterface';
+import { TranslationMain } from './view/translation/TranslationMain';
+import { GlobalTaskMonitor } from './view/translation/GlobalTaskMonitor';
 
 
 
 function App() {
 
   const router = createHashRouter([
+    {
+      path: '/',
+      element: <TranslationMain />
+    },
     {
       path: 'free-form',
       loader: () => {
@@ -45,7 +51,7 @@ function App() {
       element: <Launcher />
     },
     {
-      path: '/',
+      path: 'project-manager',
       element: <ProjectManager />
     },
     {
@@ -63,6 +69,7 @@ function App() {
       <StrictMode>
         <NextUIProvider>
         <RouterProvider router={router} />
+          <GlobalTaskMonitor />
         </NextUIProvider>
       </StrictMode>
     </>

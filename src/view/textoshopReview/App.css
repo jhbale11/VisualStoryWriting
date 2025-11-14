@@ -1,0 +1,8 @@
+[contenteditable]:focus {
+  outline: 0px solid transparent;
+}
+
+
+.selectedText {
+  background: rgba(129, 189, 255, 0.6);
+}

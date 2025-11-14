@@ -9,6 +9,24 @@ export const initGemini = (apiKey: string) => {
   geminiAPI = new GoogleGenerativeAI(apiKey);
 };
 
+export interface GlossaryArc {
+  id: string;
+  name: string; // Arc name (e.g., "School Life Arc", "Tournament Arc")
+  description: string; // Description of the arc
+  characters: string[]; // Character names appearing in this arc
+  start_chunk?: number; // Starting chunk index
+  end_chunk?: number; // Ending chunk index
+  key_events?: string[]; // Key events in this arc
+}
+
+export interface CharacterRelationshipInArc {
+  character_name: string;
+  relationship_type: string;
+  description: string;
+  sentiment?: 'positive' | 'negative' | 'neutral';
+  arc_id?: string; // Which arc this relationship is relevant to
+}
+
 export interface GlossaryCharacter {
   id: string;
   name: string;
@@ -33,12 +51,7 @@ export interface GlossaryCharacter {
   name_variants?: { [key: string]: string }; // e.g., {"nickname": "별명", "title": "직함"}
   honorifics_used?: { [characterId: string]: string }; // e.g., {"char_2": "-님"}
   first_appearance?: string; // e.g., "Chapter 1 during school entrance"
-  relationships: Array<{
-    character_name: string;
-    relationship_type: string;
-    description: string;
-    sentiment?: 'positive' | 'negative' | 'neutral';
-  }>;
+  relationships: Array<CharacterRelationshipInArc>;
 }
 
 export interface GlossaryEvent {
@@ -104,8 +117,9 @@ export interface GlossaryState {
   events: GlossaryEvent[];
   locations: GlossaryLocation[];
   terms: GlossaryTerm[];
+  arcs: GlossaryArc[]; // Story arcs
   story_summary: StorySummary;
-  key_events_and_arcs: string[]; // List of major story arcs
+  key_events_and_arcs: string[]; // List of major story arcs (legacy, kept for compatibility)
   honorifics: { [key: string]: string }; // e.g., {"님": "formal honorific suffix..."}
   recurring_phrases: { [korean: string]: string }; // e.g., {"그때 그 순간": "at that very moment"}
   world_building_notes: string[]; // General world-building observations
@@ -128,10 +142,12 @@ interface GlossaryAction {
   addEvent: (event: GlossaryEvent) => void;
   addLocation: (location: GlossaryLocation) => void;
   addTerm: (term: GlossaryTerm) => void;
+  addArc: (arc: GlossaryArc) => void;
   updateCharacter: (id: string, updates: Partial<GlossaryCharacter>) => void;
   updateEvent: (id: string, updates: Partial<GlossaryEvent>) => void;
   updateLocation: (id: string, updates: Partial<GlossaryLocation>) => void;
   updateTerm: (id: string, updates: Partial<GlossaryTerm>) => void;
+  updateArc: (id: string, updates: Partial<GlossaryArc>) => void;
   updateStorySummary: (summary: Partial<StorySummary>) => void;
   updateStyleGuide: (guide: Partial<StyleGuide>) => void;
   addKeyEvent: (event: string) => void;
@@ -150,6 +166,7 @@ interface GlossaryAction {
   deleteEvent: (id: string) => void;
   deleteLocation: (id: string) => void;
   deleteTerm: (id: string) => void;
+  deleteArc: (id: string) => void;
   mergeCharacters: (existingId: string, newCharacter: Partial<GlossaryCharacter>) => void;
   convertToModelFormat: () => { entityNodes: EntityNode[], actionEdges: ActionEdge[], locationNodes: LocationNode[] };
   importFromJSON: (json: string) => void;
@@ -161,6 +178,7 @@ const initialState: GlossaryState = {
   events: [],
   locations: [],
   terms: [],
+  arcs: [],
   story_summary: { logline: '', blurb: '' },
   key_events_and_arcs: [],
   honorifics: {},
@@ -264,6 +282,7 @@ async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
   events: GlossaryEvent[];
   locations: GlossaryLocation[];
   terms: GlossaryTerm[];
+  arcs?: GlossaryArc[];
   honorifics?: { [key: string]: string };
   recurring_phrases?: { [key: string]: string };
   world_building_notes?: string[];
@@ -285,21 +304,28 @@ ${languageDirective}
 
 **추출 우선순위 (초상세하게 기록):**
 
-1. **인물 증거 (Character Evidence)**:
+1. **스토리 아크 (Story Arc) - 매우 중요!**:
+   - **현재 arc 파악**: 이 chunk가 속한 스토리 arc의 이름과 설명
+   - **arc 내 등장인물**: 이 arc에서 중요한 역할을 하는 인물들
+   - **arc 내 관계**: 이 arc에서 드러나는 인물 간의 관계와 역학
+   - **주요 사건**: 이 arc의 핵심 사건들
+   - 예: "School Life Arc", "Tournament Arc", "Relationship Development Arc" 등
+
+2. **인물 증거 (Character Evidence)**:
    - **행동 & 행위**: 구체적 행동 기록 (예: "그는 주먹을 꽉 쥐어 손가락 마디가 하얗게 변했다")
    - **대화 & 말투 패턴**: 직접 인용문 추출, 특이한 말버릇이나 서술에 명시된 어조 기록
    - **내적 독백**: 인물의 내면 생각을 그대로 추출
    - **외형 & 특성 묘사**: 외모, 능력, 기술, 직업에 대한 모든 세부사항 기록
-   - **관계 역학**: 구체적인 상호작용 기록. "라이벌"이 아니라 "캐릭터 A가 캐릭터 B를 노려보며 반드시 뛰어넘겠다고 다짐했다"로 기록
+   - **관계 역학 (arc_id 포함!)**: 구체적인 상호작용 기록. 각 관계에 해당 arc의 id를 포함하여 arc별 관계 파악 가능하게 함
    - **어투 (speech_style)**: 격식체/반말/거친 말투/고어체 등 파악
    - **첫 등장 (first_appearance)**: 이 인물이 처음 등장한 맥락 기록
 
-2. **서사 & 플롯 증거**:
+3. **서사 & 플롯 증거**:
    - **핵심 사건**: 플롯을 진전시키는 사건 기록
    - **밝혀진 정보**: 새로운 설정, 배경, 플래시백 등 기록
    - **영향력 있는 대사/상황**: 인물이나 순간을 정의하는 강렬한 대사나 감정적 상황 추출
 
-3. **세계관 구축 증거**:
+4. **세계관 구축 증거**:
    - **장소**: 분위기, 목적, 묘사 상세히 기록
    - **용어 & 아이템**: 고유 용어, 마법 아이템, 기술과 그 기능 기록
    - **경어 (honorifics)**: 한국어 경어(님, 씨 등)와 그 뉘앙스 기록
@@ -310,6 +336,15 @@ ${languageDirective}
 
 JSON 형식:
 {
+  "arcs": [
+    {
+      "name": "Arc name in TARGET LANGUAGE (e.g., 'School Life Arc', 'Tournament Arc', 'Relationship Development Arc')",
+      "description": "Detailed description of this arc in TARGET LANGUAGE",
+      "characters": ["Character1 name", "Character2 name"],
+      "start_chunk": ${chunkIndex},
+      "key_events": ["Key event 1 in TARGET LANGUAGE", "Key event 2 in TARGET LANGUAGE"]
+    }
+  ],
   "characters": [
     {
       "name": "인물 이름",
@@ -339,7 +374,8 @@ JSON 형식:
           "character_name": "관계 대상 인물 이름",
           "relationship_type": "친구/적/가족/연인/동료/라이벌/숙명의 라이벌/적대적 연인 등",
           "description": "관계 설명 (한글)",
-          "sentiment": "positive/negative/neutral"
+          "sentiment": "positive/negative/neutral",
+          "arc_id": "arc_name (이 관계가 드러나는 arc의 name)"
         }
       ]
     }
@@ -489,13 +525,23 @@ ${chunk}`;
       notes: term.notes || '',
     }));
 
+    const arcs: GlossaryArc[] = (parsed.arcs || []).map((arc: any, idx: number) => ({
+      id: arc.name || `arc-${chunkIndex}-${idx}`,
+      name: arc.name || 'Unknown Arc',
+      description: arc.description || '',
+      characters: arc.characters || [],
+      start_chunk: arc.start_chunk !== undefined ? arc.start_chunk : chunkIndex,
+      end_chunk: arc.end_chunk,
+      key_events: arc.key_events || [],
+    }));
+
     const honorifics = parsed.honorifics || {};
     const recurring_phrases = parsed.recurring_phrases || {};
     const world_building_notes = parsed.world_building_notes || [];
     const key_events_in_chunk = parsed.key_events_in_chunk || [];
     const style_guide = parsed.style_guide || {};
 
-    return { characters, events, locations, terms, honorifics, recurring_phrases, world_building_notes, key_events_in_chunk, style_guide };
+    return { characters, events, locations, terms, arcs, honorifics, recurring_phrases, world_building_notes, key_events_in_chunk, style_guide };
   } catch (error) {
     console.error('Error extracting from chunk:', error);
     return { characters: [], events: [], locations: [], terms: [] };
@@ -1021,7 +1067,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
   processChunk: async (chunk, chunkIndex) => {
     set({ isLoading: true });
 
-    const { characters, events, locations, terms, honorifics, recurring_phrases, world_building_notes, key_events_in_chunk, style_guide } = await extractFromChunk(chunk, chunkIndex);
+    const { characters, events, locations, terms, arcs, honorifics, recurring_phrases, world_building_notes, key_events_in_chunk, style_guide } = await extractFromChunk(chunk, chunkIndex);
 
     const existingCharacters = get().characters;
 
@@ -1075,6 +1121,27 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
         get().addTerm(newTerm);
       }
     });
+
+    // Add or update arcs
+    if (arcs && arcs.length > 0) {
+      const existingArcs = get().arcs;
+      arcs.forEach((newArc) => {
+        const existing = existingArcs.find(
+          (a) => a.name.toLowerCase() === newArc.name.toLowerCase()
+        );
+        if (existing) {
+          // Update existing arc - extend character list and key events
+          get().updateArc(existing.id, {
+            description: newArc.description || existing.description,
+            characters: [...new Set([...existing.characters, ...newArc.characters])],
+            end_chunk: chunkIndex,
+            key_events: [...new Set([...(existing.key_events || []), ...(newArc.key_events || [])])],
+          });
+        } else {
+          get().addArc(newArc);
+        }
+      });
+    }
 
     // Merge honorifics, recurring phrases, and world building notes
     if (honorifics) {
@@ -1210,60 +1277,100 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }));
   },
 
-  updateCharacter: (id, updates) => {
+  addArc: (arc) => {
     set((state) => ({
-      characters: state.characters.map((char) =>
-        char.id === id ? { ...char, ...updates } : char
-      ),
+      arcs: [...state.arcs, arc],
     }));
+  },
+
+  updateCharacter: (id, updates) => {
+    set((state) => {
+      const updatedCharacters = state.characters.map((char) =>
+        char.id === id ? { ...char, ...updates, id: char.id } : char
+      );
+      console.log('Updated character:', id, updates);
+      return { characters: updatedCharacters };
+    });
   },
 
   updateEvent: (id, updates) => {
-    set((state) => ({
-      events: state.events.map((event) =>
-        event.id === id ? { ...event, ...updates } : event
-      ),
-    }));
+    set((state) => {
+      const updatedEvents = state.events.map((event) =>
+        event.id === id ? { ...event, ...updates, id: event.id } : event
+      );
+      console.log('Updated event:', id, updates);
+      return { events: updatedEvents };
+    });
   },
 
   updateLocation: (id, updates) => {
-    set((state) => ({
-      locations: state.locations.map((loc) =>
-        loc.id === id ? { ...loc, ...updates } : loc
-      ),
-    }));
+    set((state) => {
+      const updatedLocations = state.locations.map((loc) =>
+        loc.id === id ? { ...loc, ...updates, id: loc.id } : loc
+      );
+      console.log('Updated location:', id, updates);
+      return { locations: updatedLocations };
+    });
   },
 
   updateTerm: (id, updates) => {
-    set((state) => ({
-      terms: state.terms.map((term) =>
-        term.id === id ? { ...term, ...updates } : term
-      ),
-    }));
+    set((state) => {
+      const updatedTerms = state.terms.map((term) =>
+        term.id === id ? { ...term, ...updates, id: term.id } : term
+      );
+      console.log('Updated term:', id, updates);
+      return { terms: updatedTerms };
+    });
+  },
+
+  updateArc: (id, updates) => {
+    set((state) => {
+      const updatedArcs = state.arcs.map((arc) =>
+        arc.id === id ? { ...arc, ...updates, id: arc.id } : arc
+      );
+      console.log('Updated arc:', id, updates);
+      return { arcs: updatedArcs };
+    });
   },
 
   deleteCharacter: (id) => {
-    set((state) => ({
-      characters: state.characters.filter((char) => char.id !== id),
-    }));
+    set((state) => {
+      const filtered = state.characters.filter((char) => char.id !== id);
+      console.log('Deleted character:', id);
+      return { characters: filtered };
+    });
   },
 
   deleteEvent: (id) => {
-    set((state) => ({
-      events: state.events.filter((event) => event.id !== id),
-    }));
+    set((state) => {
+      const filtered = state.events.filter((event) => event.id !== id);
+      console.log('Deleted event:', id);
+      return { events: filtered };
+    });
   },
 
   deleteLocation: (id) => {
-    set((state) => ({
-      locations: state.locations.filter((loc) => loc.id !== id),
-    }));
+    set((state) => {
+      const filtered = state.locations.filter((loc) => loc.id !== id);
+      console.log('Deleted location:', id);
+      return { locations: filtered };
+    });
   },
 
   deleteTerm: (id) => {
-    set((state) => ({
-      terms: state.terms.filter((term) => term.id !== id),
-    }));
+    set((state) => {
+      const filtered = state.terms.filter((term) => term.id !== id);
+      console.log('Deleted term:', id);
+      return { terms: filtered };
+    });
+  },
+
+  deleteArc: (id) => {
+    set((state) => {
+      const filtered = state.arcs.filter((arc) => arc.id !== id);
+      console.log('Deleted arc:', id);
+      return { arcs: filtered };
+    });
   },
 
   updateStorySummary: (summary) => {
@@ -1473,6 +1580,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
         events: data.events || [],
         locations: data.locations || [],
         terms: data.terms || [],
+        arcs: data.arcs || [],
         story_summary: data.story_summary || { logline: '', blurb: '' },
         key_events_and_arcs: data.key_events_and_arcs || [],
         honorifics: data.honorifics || {},
@@ -1495,6 +1603,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       events: state.events,
       locations: state.locations,
       terms: state.terms,
+      arcs: state.arcs,
       story_summary: state.story_summary,
       key_events_and_arcs: state.key_events_and_arcs,
       honorifics: state.honorifics,

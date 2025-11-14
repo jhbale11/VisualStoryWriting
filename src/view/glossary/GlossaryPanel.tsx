@@ -1,7 +1,7 @@
 import { Card, CardBody, CardHeader, Chip, Divider, Input, Textarea, Button, Select, SelectItem } from '@nextui-org/react';
 import { useState } from 'react';
-import { FiSearch, FiBook, FiMap, FiGrid, FiFileText, FiEdit3, FiFeather, FiPlus, FiTrash } from 'react-icons/fi';
-import { GlossaryCharacter, GlossaryEvent, useGlossaryStore, StorySummary, StyleGuide } from '../../model/GlossaryModel';
+import { FiSearch, FiBook, FiMap, FiGrid, FiFileText, FiEdit3, FiFeather, FiPlus, FiTrash, FiUsers } from 'react-icons/fi';
+import { GlossaryCharacter, GlossaryEvent, GlossaryArc, useGlossaryStore, StorySummary, StyleGuide } from '../../model/GlossaryModel';
 
 interface Props {
   characters: GlossaryCharacter[];
@@ -22,6 +22,7 @@ export default function GlossaryPanel({
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'characters' | 'events' | 'summary' | 'arcs' | 'style' | 'features'>('characters');
+  const [selectedArcId, setSelectedArcId] = useState<string | null>(null);
   
   const storySummary = useGlossaryStore((state) => state.story_summary);
   const keyEvents = useGlossaryStore((state) => state.key_events_and_arcs);
@@ -31,6 +32,9 @@ export default function GlossaryPanel({
   const recurringPhrases = useGlossaryStore((state) => state.recurring_phrases);
   const locations = useGlossaryStore((state) => state.locations);
   const terms = useGlossaryStore((state) => state.terms);
+  const arcs = useGlossaryStore((state) => state.arcs);
+  const updateArc = useGlossaryStore((state) => state.updateArc);
+  const deleteArc = useGlossaryStore((state) => state.deleteArc);
   
   const updateStorySummary = useGlossaryStore((state) => state.updateStorySummary);
   const updateStyleGuide = useGlossaryStore((state) => state.updateStyleGuide);
@@ -105,7 +109,7 @@ export default function GlossaryPanel({
             style={{ cursor: 'pointer' }}
             startContent={<FiMap />}
           >
-            Key Arcs ({keyEvents.length})
+            Story Arcs ({arcs.length})
           </Chip>
           <Chip
             onClick={() => setActiveTab('style')}
@@ -390,27 +394,201 @@ export default function GlossaryPanel({
 
         {activeTab === 'arcs' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <Card>
-              <CardHeader>
-                <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Key Story Arcs & Events</h3>
-              </CardHeader>
-              <Divider />
-              <CardBody>
-                {keyEvents.length > 0 ? (
+            {arcs.length === 0 ? (
+              <Card>
+                <CardBody>
+                  <p style={{ fontSize: '14px', color: '#888', fontStyle: 'italic', textAlign: 'center', padding: '20px' }}>
+                    No story arcs yet. Process text chunks to generate arc information.
+                  </p>
+                </CardBody>
+              </Card>
+            ) : (
+              <>
+                {arcs.map((arc) => (
+                  <Card
+                    key={arc.id}
+                    isPressable
+                    isHoverable
+                    onClick={() => setSelectedArcId(selectedArcId === arc.id ? null : arc.id)}
+                    style={{
+                      background: selectedArcId === arc.id ? '#f0f9ff' : 'white',
+                      border: selectedArcId === arc.id ? '2px solid #667eea' : '1px solid #e0e0e0',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CardHeader>
+                      <div style={{ width: '100%' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+                          <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
+                            {arc.name}
+                          </h3>
+                          <Chip size="sm" variant="flat" color="secondary" startContent={<FiUsers />}>
+                            {arc.characters.length} characters
+                          </Chip>
+                        </div>
+                        {arc.start_chunk !== undefined && (
+                          <p style={{ fontSize: '11px', color: '#888', margin: 0 }}>
+                            Chunks {arc.start_chunk}{arc.end_chunk !== undefined ? ` - ${arc.end_chunk}` : '+'}
+                          </p>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <Divider />
+                    <CardBody>
+                      <p style={{ fontSize: '14px', color: '#666', marginBottom: '12px', lineHeight: '1.6' }}>
+                        {arc.description}
+                      </p>
+
+                      {selectedArcId === arc.id && (
+                        <>
+                          {/* Characters in this arc */}
+                          {arc.characters.length > 0 && (
+                            <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                              <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+                                등장인물 ({arc.characters.length}명):
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {arc.characters.map((charName, idx) => {
+                                  const character = characters.find(
+                                    c => c.name.toLowerCase() === charName.toLowerCase() ||
+                                         c.korean_name?.toLowerCase() === charName.toLowerCase()
+                                  );
+                                  return (
+                                    <Chip
+                                      key={idx}
+                                      size="md"
+                                      variant="flat"
+                                      color="secondary"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (character) onCharacterSelect(character);
+                                      }}
+                                      style={{ cursor: character ? 'pointer' : 'default' }}
+                                    >
+                                      {character?.emoji || '👤'} {charName}
+                                    </Chip>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Relationships in this arc */}
+                          <div style={{ marginTop: '16px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+                              인물 간 관계:
+                            </div>
+                            {(() => {
+                              const arcCharacters = characters.filter(c =>
+                                arc.characters.some(arcChar =>
+                                  arcChar.toLowerCase() === c.name.toLowerCase() ||
+                                  arcChar.toLowerCase() === c.korean_name?.toLowerCase()
+                                )
+                              );
+                              const arcRelationships = arcCharacters.flatMap(char =>
+                                char.relationships
+                                  .filter(rel => !rel.arc_id || rel.arc_id === arc.name || rel.arc_id === arc.id)
+                                  .map(rel => ({
+                                    from: char.name,
+                                    fromEmoji: char.emoji,
+                                    to: rel.character_name,
+                                    type: rel.relationship_type,
+                                    description: rel.description,
+                                    sentiment: rel.sentiment || 'neutral'
+                                  }))
+                              );
+
+                              if (arcRelationships.length === 0) {
+                                return (
+                                  <p style={{ fontSize: '13px', color: '#888', fontStyle: 'italic' }}>
+                                    이 arc에서 명시적으로 드러난 관계가 아직 없습니다.
+                                  </p>
+                                );
+                              }
+
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                  {arcRelationships.map((rel, idx) => {
+                                    const sentimentColor =
+                                      rel.sentiment === 'positive' ? '#22c55e' :
+                                      rel.sentiment === 'negative' ? '#ef4444' :
+                                      '#6b7280';
+                                    return (
+                                      <div
+                                        key={idx}
+                                        style={{
+                                          background: '#f9fafb',
+                                          padding: '12px',
+                                          borderRadius: '8px',
+                                          borderLeft: `4px solid ${sentimentColor}`
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                          <span style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                                            {rel.fromEmoji} {rel.from}
+                                          </span>
+                                          <span style={{ color: sentimentColor, fontSize: '16px' }}>→</span>
+                                          <span style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                                            {rel.to}
+                                          </span>
+                                        </div>
+                                        <div style={{ fontSize: '12px', color: sentimentColor, fontWeight: '600', marginBottom: '4px' }}>
+                                          {rel.type}
+                                        </div>
+                                        {rel.description && (
+                                          <div style={{ fontSize: '12px', color: '#666', lineHeight: '1.5' }}>
+                                            {rel.description}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                          </div>
+
+                          {/* Key events in this arc */}
+                          {arc.key_events && arc.key_events.length > 0 && (
+                            <div style={{ marginTop: '16px' }}>
+                              <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#667eea', marginBottom: '10px' }}>
+                                주요 사건:
+                              </div>
+                              <ul style={{ paddingLeft: '20px', margin: 0 }}>
+                                {arc.key_events.map((event, idx) => (
+                                  <li key={idx} style={{ fontSize: '13px', color: '#666', marginBottom: '6px', lineHeight: '1.5' }}>
+                                    {event}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </CardBody>
+                  </Card>
+                ))}
+              </>
+            )}
+
+            {/* Legacy key events display (if any exist) */}
+            {keyEvents.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Additional Key Events</h3>
+                </CardHeader>
+                <Divider />
+                <CardBody>
                   <ol style={{ paddingLeft: '20px', margin: 0 }}>
                     {keyEvents.map((event, idx) => (
-                      <li key={idx} style={{ fontSize: '14px', color: '#666', marginBottom: '12px', lineHeight: '1.5' }}>
+                      <li key={idx} style={{ fontSize: '13px', color: '#666', marginBottom: '10px', lineHeight: '1.5' }}>
                         {event}
                       </li>
                     ))}
                   </ol>
-                ) : (
-                  <p style={{ fontSize: '14px', color: '#888', fontStyle: 'italic' }}>
-                    No key events yet. Process text chunks to generate.
-                  </p>
-                )}
-              </CardBody>
-            </Card>
+                </CardBody>
+              </Card>
+            )}
           </div>
         )}
 

@@ -775,19 +775,20 @@ export default function GlossaryBuilder() {
         const project = arr.find((p: any) => p.id === currentId);
         
         if (project && project.glossary) {
-          // Load glossary data
+          // Load glossary data with deep copy to avoid reference issues
+          const glossaryData = project.glossary;
           useGlossaryStore.setState({
-            characters: project.glossary.characters || [],
-            events: project.glossary.events || [],
-            locations: project.glossary.locations || [],
-            terms: project.glossary.terms || [],
-            fullText: project.glossary.fullText || '',
-            story_summary: project.glossary.story_summary || { logline: '', blurb: '' },
-            key_events_and_arcs: project.glossary.key_events_and_arcs || [],
-            honorifics: project.glossary.honorifics || {},
-            recurring_phrases: project.glossary.recurring_phrases || {},
-            world_building_notes: project.glossary.world_building_notes || [],
-            style_guide: project.glossary.style_guide || {
+            characters: JSON.parse(JSON.stringify(glossaryData.characters || [])),
+            events: JSON.parse(JSON.stringify(glossaryData.events || [])),
+            locations: JSON.parse(JSON.stringify(glossaryData.locations || [])),
+            terms: JSON.parse(JSON.stringify(glossaryData.terms || [])),
+            fullText: glossaryData.fullText || '',
+            story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
+            key_events_and_arcs: JSON.parse(JSON.stringify(glossaryData.key_events_and_arcs || [])),
+            honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
+            recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
+            world_building_notes: JSON.parse(JSON.stringify(glossaryData.world_building_notes || [])),
+            style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || {
               tone: '',
               formality_level: 'medium',
               themes: [],
@@ -806,9 +807,10 @@ export default function GlossaryBuilder() {
                 common_expressions: [],
                 atmosphere_descriptors: []
               }
-            },
-            target_language: project.glossary.target_language || 'en',
+            })),
+            target_language: glossaryData.target_language || 'en',
           });
+          console.log('Loaded project:', currentId);
         }
       }
     } catch (error) {
@@ -859,23 +861,27 @@ export default function GlossaryBuilder() {
         
         if (projectIndex >= 0) {
           const glossaryState = useGlossaryStore.getState();
+          
+          // Create a deep copy to avoid reference issues
+          const glossarySnapshot = {
+            characters: JSON.parse(JSON.stringify(glossaryState.characters)),
+            events: JSON.parse(JSON.stringify(glossaryState.events)),
+            locations: JSON.parse(JSON.stringify(glossaryState.locations)),
+            terms: JSON.parse(JSON.stringify(glossaryState.terms)),
+            fullText: glossaryState.fullText,
+            story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
+            key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
+            honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
+            recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
+            world_building_notes: JSON.parse(JSON.stringify(glossaryState.world_building_notes)),
+            style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
+            target_language: glossaryState.target_language,
+          };
+          
           arr[projectIndex] = {
             ...arr[projectIndex],
             updatedAt: Date.now(),
-            glossary: {
-              characters: glossaryState.characters,
-              events: glossaryState.events,
-              locations: glossaryState.locations,
-              terms: glossaryState.terms,
-              fullText: glossaryState.fullText,
-              story_summary: glossaryState.story_summary,
-              key_events_and_arcs: glossaryState.key_events_and_arcs,
-              honorifics: glossaryState.honorifics,
-              recurring_phrases: glossaryState.recurring_phrases,
-              world_building_notes: glossaryState.world_building_notes,
-              style_guide: glossaryState.style_guide,
-              target_language: glossaryState.target_language,
-            },
+            glossary: glossarySnapshot,
             view: {
               entityNodes: useModelStore.getState().entityNodes,
               actionEdges: useModelStore.getState().actionEdges,
@@ -886,11 +892,12 @@ export default function GlossaryBuilder() {
             }
           };
           localStorage.setItem('vsw.projects', JSON.stringify(arr));
+          console.log('Auto-saved project:', currentId);
         }
       } catch (error) {
         console.error('Auto-save failed:', error);
       }
-    }, 1000); // Debounce for 1 second
+    }, 3000); // Debounce for 3 seconds to avoid conflicts with manual editing
 
     return () => clearTimeout(saveTimer);
   }, [
@@ -979,24 +986,27 @@ export default function GlossaryBuilder() {
             const currentId = localStorage.getItem('vsw.currentProjectId');
             const glossaryState = useGlossaryStore.getState();
 
+            // Create deep copy to avoid reference issues
+            const glossarySnapshot = {
+              characters: JSON.parse(JSON.stringify(glossaryState.characters)),
+              events: JSON.parse(JSON.stringify(glossaryState.events)),
+              locations: JSON.parse(JSON.stringify(glossaryState.locations)),
+              terms: JSON.parse(JSON.stringify(glossaryState.terms)),
+              fullText: glossaryState.fullText,
+              story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
+              key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
+              honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
+              recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
+              world_building_notes: JSON.parse(JSON.stringify(glossaryState.world_building_notes)),
+              style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
+              target_language: glossaryState.target_language,
+            };
+
             const snapshot = {
               id: currentId || (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`),
               name: (arr.find((p: any) => p.id === currentId)?.name) || `Project ${new Date().toLocaleString()}`,
               updatedAt: Date.now(),
-              glossary: {
-                characters: glossaryState.characters,
-                events: glossaryState.events,
-                locations: glossaryState.locations,
-                terms: glossaryState.terms,
-                fullText: glossaryState.fullText,
-                story_summary: glossaryState.story_summary,
-                key_events_and_arcs: glossaryState.key_events_and_arcs,
-                honorifics: glossaryState.honorifics,
-                recurring_phrases: glossaryState.recurring_phrases,
-                world_building_notes: glossaryState.world_building_notes,
-                style_guide: glossaryState.style_guide,
-                target_language: glossaryState.target_language,
-              },
+              glossary: glossarySnapshot,
               view: {
                 entityNodes: useModelStore.getState().entityNodes,
                 actionEdges: useModelStore.getState().actionEdges,
@@ -1012,8 +1022,9 @@ export default function GlossaryBuilder() {
             if (idx >= 0) { next[idx] = snapshot; } else { next = [snapshot, ...arr]; }
             localStorage.setItem('vsw.projects', JSON.stringify(next));
             localStorage.setItem('vsw.currentProjectId', snapshot.id);
+            console.log('Manually saved project:', snapshot.id);
           } catch {} }}>Save</Button>
-          <Button size="sm" variant="flat" onClick={() => { window.location.hash = '/'; }}>Back to Projects</Button>
+          <Button size="sm" variant="flat" onClick={() => { window.location.hash = '/'; }}>← Back to Home</Button>
           <Tooltip content="Import JSON">
             <Button size="sm" variant="flat" startContent={<FaUpload />} onClick={onImportOpen}>
               Import

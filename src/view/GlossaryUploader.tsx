@@ -1,17 +1,28 @@
 import { Button, Card, CardBody, CardHeader, Divider, Progress, Select, SelectItem } from "@nextui-org/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FiUpload } from "react-icons/fi";
-import { initGemini, useGlossaryStore } from '../model/GlossaryModel';
+import { useTranslationStore } from '../translation/store/TranslationStore';
+import { taskRunner } from '../translation/services/TaskRunner';
 
 export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  const [currentChunk, setCurrentChunk] = useState(0);
-  const [totalChunks, setTotalChunksState] = useState(0);
-  const [isConsolidating, setIsConsolidating] = useState(false);
   const [targetLanguage, setTargetLanguage] = useState<'en' | 'ja'>('en');
+  const [taskId, setTaskId] = useState<string | null>(null);
+  
+  const { createTask, tasks } = useTranslationStore();
+  const currentTask = taskId ? tasks[taskId] : undefined;
+  const isProcessing = currentTask?.status === 'running';
+  const progress = currentTask?.progress || 0;
+
+  // Monitor task completion
+  useEffect(() => {
+    if (currentTask && currentTask.status === 'completed') {
+      setTimeout(() => {
+        window.location.hash = '/glossary-builder';
+      }, 500);
+    }
+  }, [currentTask]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -30,93 +41,57 @@ export default function GlossaryUploader() {
       return;
     }
 
-    initGemini(apiKey);
-
-    setIsProcessing(true);
-    setProgress(0);
-    setCurrentChunk(0);
-
     const reader = new FileReader();
     reader.onload = async (e) => {
       const text = e.target?.result as string;
-
-      const chunkSize = 10000;
-      const chunks: string[] = [];
-
-      for (let i = 0; i < text.length; i += chunkSize) {
-        chunks.push(text.substring(i, i + chunkSize));
-      }
-
-      setTotalChunksState(chunks.length);
-
-      useGlossaryStore.getState().reset();
-      useGlossaryStore.getState().setTargetLanguage(targetLanguage);
-      // Also reset the editing model to avoid stale demo content bleeding into view
-      try {
-        const { useModelStore } = await import('../model/Model');
-        useModelStore.getState().reset();
-      } catch {}
-      useGlossaryStore.getState().setFullText(text);
-      useGlossaryStore.getState().setTotalChunks(chunks.length);
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        setCurrentChunk(i + 1);
-        setProgress(((i + 1) / chunks.length) * 90);
-
-        try {
-          await useGlossaryStore.getState().processChunk(chunk, i);
-        } catch (error) {
-          console.error(`Error processing chunk ${i}:`, error);
+      
+      // Generate project ID
+      const vswProjectId = (globalThis.crypto && 'randomUUID' in globalThis.crypto 
+        ? crypto.randomUUID() 
+        : `p-${Date.now()}`);
+      
+      const projectName = file?.name 
+        ? `${file.name.replace(/\.[^/.]+$/, '')} (${new Date().toLocaleString()})` 
+        : `Glossary Project ${new Date().toLocaleString()}`;
+      
+      // Create placeholder project
+      const raw = localStorage.getItem('vsw.projects') || '[]';
+      const arr = JSON.parse(raw);
+      const placeholderProject = {
+        id: vswProjectId,
+        name: projectName,
+        updatedAt: Date.now(),
+        glossary: {},
+        view: {
+          entityNodes: [],
+          actionEdges: [],
+          locationNodes: [],
+          textState: [],
+          isReadOnly: false,
+          relationsPositions: {}
         }
-      }
-
-      setProgress(95);
-      setIsConsolidating(true);
-
-      try {
-        await useGlossaryStore.getState().consolidateResults();
-      } catch (error) {
-        console.error('Error consolidating results:', error);
-      }
-
-      setIsConsolidating(false);
-
-      setProgress(100);
-      setIsProcessing(false);
-
-      setTimeout(() => {
-        try {
-          const id = (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`);
-          const name = file?.name ? `${file.name.replace(/\.[^/.]+$/, '')} (${new Date().toLocaleString()})` : `Project ${new Date().toLocaleString()}`;
-          const raw = localStorage.getItem('vsw.projects') || '[]';
-          const arr = JSON.parse(raw);
-          const project = {
-            id,
-            name,
-            updatedAt: Date.now(),
-            glossary: {
-              characters: useGlossaryStore.getState().characters,
-              events: useGlossaryStore.getState().events,
-              locations: useGlossaryStore.getState().locations,
-              terms: useGlossaryStore.getState().terms,
-              fullText: useGlossaryStore.getState().fullText,
-            },
-            view: {
-              entityNodes: [],
-              actionEdges: [],
-              locationNodes: [],
-              textState: [],
-              isReadOnly: false,
-              relationsPositions: {}
-            }
-          } as any;
-          const next = [project, ...arr];
-          localStorage.setItem('vsw.projects', JSON.stringify(next));
-          localStorage.setItem('vsw.currentProjectId', id);
-        } catch {}
-        window.location.hash = '/glossary-builder';
-      }, 500);
+      };
+      arr.unshift(placeholderProject);
+      localStorage.setItem('vsw.projects', JSON.stringify(arr));
+      
+      // Create task
+      const newTaskId = createTask({
+        type: 'glossary_extraction',
+        projectId: vswProjectId, // Use dummy projectId for glossary tasks
+        metadata: {
+          text,
+          targetLanguage,
+          vswProjectId,
+        },
+      });
+      
+      setTaskId(newTaskId);
+      
+      // Start task in background
+      taskRunner.runTask(newTaskId).catch(error => {
+        console.error('Error running glossary extraction:', error);
+        alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      });
     };
 
     reader.readAsText(file);
@@ -229,20 +204,22 @@ export default function GlossaryUploader() {
             />
           </div>
 
-          {isProcessing && (
-            <div>
-              <p style={{ fontSize: '14px', marginBottom: '10px' }}>
-                {isConsolidating
-                  ? 'Consolidating results and selecting major events...'
-                  : `Processing chunk ${currentChunk} of ${totalChunks} (${Math.round(progress)}%)`
-                }
-              </p>
-              <Progress value={progress} color="secondary" />
-              <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                {isConsolidating
-                  ? 'Analyzing overall narrative and character development...'
-                  : 'This may take several minutes depending on text length...'
-                }
+          {isProcessing && currentTask && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <span style={{ fontSize: '14px', color: '#666' }}>
+                  {currentTask.message}
+                </span>
+                <Progress
+                  value={progress * 100}
+                  color="secondary"
+                  size="md"
+                  showValueLabel={true}
+                  className="max-w-full"
+                />
+              </div>
+              <p style={{ fontSize: '12px', color: '#888', textAlign: 'center' }}>
+                Processing in background. You can navigate away and check progress in the top-right corner.
               </p>
             </div>
           )}

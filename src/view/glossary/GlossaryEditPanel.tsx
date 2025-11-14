@@ -1,5 +1,5 @@
 import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Select, SelectItem, Textarea } from '@nextui-org/react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FaPlus, FaTrash } from 'react-icons/fa';
 import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../../model/GlossaryModel';
 
@@ -21,17 +21,27 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
 
   const [editData, setEditData] = useState<any>(item || {});
 
+  // Sync editData when item changes
+  useEffect(() => {
+    if (item) {
+      setEditData({ ...item });
+    }
+  }, [item]);
+
   if (!item) return null;
 
   const handleSave = () => {
+    // Ensure id is preserved
+    const dataToSave = { ...editData, id: item.id };
+    
     if (type === 'character') {
-      updateCharacter(item.id, editData);
+      updateCharacter(item.id, dataToSave);
     } else if (type === 'event') {
-      updateEvent(item.id, editData);
+      updateEvent(item.id, dataToSave);
     } else if (type === 'location') {
-      updateLocation(item.id, editData);
+      updateLocation(item.id, dataToSave);
     } else if (type === 'term') {
-      updateTerm(item.id, editData);
+      updateTerm(item.id, dataToSave);
     }
     onClose();
   };

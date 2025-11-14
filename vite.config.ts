@@ -8,5 +8,13 @@ export default defineConfig({
     sourcemap: false,
     outDir: 'build',
     minify: 'esbuild',
-  }
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      // Node.js global to browser globalThis for LangChain
+      define: {
+        global: 'globalThis',
+      },
+    },
+  },
 })

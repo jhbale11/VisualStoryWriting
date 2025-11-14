@@ -1,0 +1,156 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(0, 0, 0, 0.87);
+  background: rgb(242, 238, 240) !important;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  img, video {
+    max-width: inherit;
+    height: inherit;
+  }
+}
+
+
+@keyframes pulseanim {
+  0% { opacity: 1;}
+  50% { opacity: 0.2;}
+  100% {  opacity: 1;}
+}
+
+@keyframes removeAnimation {
+  0% { 
+    background: rgb(246, 161, 161, 0);
+    font-size: inherit;
+  }
+  50% { 
+    background: rgb(246, 161, 161, 1);
+    font-size: inherit;
+  }
+  100% { 
+    font-size: 0px;
+    display: none;
+  }
+}
+
+
+@keyframes addAnimation {
+  0% { 
+    background: rgb(195, 246, 161);
+    font-size: 0px;
+  }
+  50% { 
+    font-size: inherit;
+    background: rgb(195, 246, 161);
+  }
+  100% { 
+    background: rgb(195, 246, 161, 0);
+    font-size: inherit;
+  }
+}
+
+a {
+  color: blue;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+body {
+  margin: 0;
+}
+
+.loading {
+  animation: pulseanim 1.2s ease-in-out infinite;
+}
+
+.textRemoval {
+  animation: removeAnimation 1s ease-in-out;
+  animation-fill-mode: forwards;
+}
+
+.textAddition {
+  animation-name: addAnimation;
+  animation-duration: 1s;
+  animation-timing-function: ease-in-out;
+  animation-delay: 0.5s;
+  animation-fill-mode: forwards;
+  font-size: 0px;
+}
+
+:focus {outline:0;}
+
+.editableTextField span::selection {
+  background: none !important;
+}
+
+/* Adapted rom https://max.hn/thoughts/how-to-create-a-highlighter-marker-effect-in-css */
+.brush {
+    /*margin: 0 0em;
+    padding: 0.1em 0.4em;*/
+    border-radius: 0.8em 0.3em;
+    background: transparent;
+    background-image: linear-gradient(
+      to right,
+      rgba(var(--tone-color), 0.1),
+      rgba(var(--tone-color), 0.7) 4%,
+      rgba(var(--tone-color), 0.3)
+    );
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;  
+}
+
+.genericSelection {
+  background: rgba(125, 188, 255, 0.6);
+}
+
+.smudge {
+  color: transparent;
+  text-shadow: 0 0 3px rgba(0,0,0,0.9);
+  background: white;
+}
+
+.textSelection {
+  background: rgba(125, 188, 255, 0.6);
+}
+
+.textHighlighted {
+  background: rgba(125, 188, 255, 0.6);
+}
+
+.bp5-tab-indicator-wrapper {
+  background: white;
+  border-radius: 0.25em;
+}
+
+.bp5-tab-panel {
+  background: white;
+}
+
+.layer-tree {
+  overflow-y: scroll !important;
+}
+
+.layer-tag:hover {
+  border-bottom: 2px solid var(--layer-color);
+}
+
+
+.layer-tag.layer-always-visible {
+  border-bottom: 2px solid var(--layer-color);
+}

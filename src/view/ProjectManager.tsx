@@ -41,18 +41,19 @@ function getViewSnapshot() {
 }
 
 function loadGlossarySnapshot(snapshot: ReturnType<typeof getGlossarySnapshot>) {
+  // Deep copy to avoid reference issues
   useGlossaryStore.setState({
-    characters: snapshot.characters || [],
-    events: snapshot.events || [],
-    locations: snapshot.locations || [],
-    terms: snapshot.terms || [],
+    characters: JSON.parse(JSON.stringify(snapshot.characters || [])),
+    events: JSON.parse(JSON.stringify(snapshot.events || [])),
+    locations: JSON.parse(JSON.stringify(snapshot.locations || [])),
+    terms: JSON.parse(JSON.stringify(snapshot.terms || [])),
     fullText: snapshot.fullText || '',
-    story_summary: snapshot.story_summary || { logline: '', blurb: '' },
-    key_events_and_arcs: snapshot.key_events_and_arcs || [],
-    honorifics: snapshot.honorifics || {},
-    recurring_phrases: snapshot.recurring_phrases || {},
-    world_building_notes: snapshot.world_building_notes || [],
-    style_guide: snapshot.style_guide || {
+    story_summary: JSON.parse(JSON.stringify(snapshot.story_summary || { logline: '', blurb: '' })),
+    key_events_and_arcs: JSON.parse(JSON.stringify(snapshot.key_events_and_arcs || [])),
+    honorifics: JSON.parse(JSON.stringify(snapshot.honorifics || {})),
+    recurring_phrases: JSON.parse(JSON.stringify(snapshot.recurring_phrases || {})),
+    world_building_notes: JSON.parse(JSON.stringify(snapshot.world_building_notes || [])),
+    style_guide: JSON.parse(JSON.stringify(snapshot.style_guide || {
       tone: '',
       formality_level: 'medium',
       themes: [],
@@ -71,7 +72,7 @@ function loadGlossarySnapshot(snapshot: ReturnType<typeof getGlossarySnapshot>) 
         common_expressions: [],
         atmosphere_descriptors: []
       }
-    },
+    })),
     target_language: snapshot.target_language || 'en',
   });
 }

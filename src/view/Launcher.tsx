@@ -138,6 +138,20 @@ export default function Launcher() {
                 >Start</Button>
             </div>
         </CardBody>
+        <Divider />
+        <CardBody>
+            <span style={{fontWeight: 800}}>Translation System (LangGraph)</span>
+            <div style={{display: 'flex', flexDirection: 'row', justifyContent: 'left', alignItems: 'center', gap: 40, marginTop: 10}}>
+                <Button
+                    onClick={() => {
+                        window.location.hash = '/translation';
+                    }}
+                >Open Translation System</Button>
+            </div>
+            <p className="text-sm text-gray-600 mt-2">
+              Korean to Japanese/English translation with AI-powered glossary building
+            </p>
+        </CardBody>
     </Card>
     </div>
 }

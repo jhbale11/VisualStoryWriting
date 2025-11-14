@@ -2,7 +2,8 @@ import { Background, BackgroundVariant, Controls, Edge, MarkerType, Node, ReactF
 import RelationshipEdgeComponent from './RelationshipEdgeComponent';
 import '@xyflow/react/dist/style.css';
 import { useEffect, useState } from 'react';
-import { GlossaryCharacter } from '../../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryArc, useGlossaryStore } from '../../model/GlossaryModel';
+import { Chip } from '@nextui-org/react';
 
 interface CharacterNode extends Node {
   data: {
@@ -73,6 +74,7 @@ export default function CharacterRelationshipGraph({
   const [nodes, setNodes] = useState<CharacterNode[]>([]);
   const [edges, setEdges] = useState<RelationshipEdge[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<RelationshipEdge | null>(null);
+  const [selectedArcId, setSelectedArcId] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, { x: number, y: number }>>(() => {
     try {
       const raw = localStorage.getItem('vsw.relations.positions') || '{}';
@@ -80,8 +82,24 @@ export default function CharacterRelationshipGraph({
     } catch { return {}; }
   });
 
+  const arcs = useGlossaryStore((state) => state.arcs);
+
+  // Filter characters by selected arc
+  const filteredCharacters = selectedArcId
+    ? (() => {
+        const selectedArc = arcs.find(a => a.id === selectedArcId);
+        if (!selectedArc) return characters;
+        return characters.filter(char =>
+          selectedArc.characters.some(arcChar =>
+            arcChar.toLowerCase() === char.name.toLowerCase() ||
+            arcChar.toLowerCase() === char.korean_name?.toLowerCase()
+          )
+        );
+      })()
+    : characters;
+
   useEffect(() => {
-    if (characters.length === 0) {
+    if (filteredCharacters.length === 0) {
       setNodes([]);
       setEdges([]);
       return;
@@ -89,11 +107,11 @@ export default function CharacterRelationshipGraph({
 
     const centerX = 400;
     const centerY = 300;
-    const radius = Math.min(250, 150 + characters.length * 20);
+    const radius = Math.min(250, 150 + filteredCharacters.length * 20);
 
-    const characterNodes: CharacterNode[] = characters.map((char, index) => {
+    const characterNodes: CharacterNode[] = filteredCharacters.map((char, index) => {
       const saved = positions[char.id];
-      const angle = (index / Math.max(characters.length,1)) * 2 * Math.PI - Math.PI / 2;
+      const angle = (index / Math.max(filteredCharacters.length,1)) * 2 * Math.PI - Math.PI / 2;
       const x = saved ? saved.x : centerX + radius * Math.cos(angle);
       const y = saved ? saved.y : centerY + radius * Math.sin(angle);
 
@@ -161,11 +179,20 @@ export default function CharacterRelationshipGraph({
     const relationshipEdges: RelationshipEdge[] = [];
     const processedPairs = new Set<string>();
 
-    characters.forEach((char) => {
+    // Filter relationships by selected arc
+    const selectedArc = selectedArcId ? arcs.find(a => a.id === selectedArcId) : null;
+
+    filteredCharacters.forEach((char) => {
       if (!char.relationships || char.relationships.length === 0) return;
 
-      char.relationships.forEach((rel) => {
-        const targetChar = characters.find(
+      char.relationships
+        .filter(rel => {
+          // If an arc is selected, only show relationships for that arc
+          if (!selectedArc) return true;
+          return !rel.arc_id || rel.arc_id === selectedArc.name || rel.arc_id === selectedArc.id;
+        })
+        .forEach((rel) => {
+        const targetChar = filteredCharacters.find(
           (c) => c.name.toLowerCase().trim() === rel.character_name.toLowerCase().trim() ||
                  c.korean_name?.toLowerCase().trim() === rel.character_name.toLowerCase().trim() ||
                  c.english_name?.toLowerCase().trim() === rel.character_name.toLowerCase().trim()
@@ -222,11 +249,11 @@ export default function CharacterRelationshipGraph({
       });
     });
 
-    console.log(`Characters: ${characters.length}, Edges: ${relationshipEdges.length}`);
+    console.log(`Characters: ${filteredCharacters.length}, Edges: ${relationshipEdges.length}`);
 
     setNodes(characterNodes);
     setEdges(relationshipEdges);
-  }, [characters, selectedCharacterId]);
+  }, [filteredCharacters, selectedCharacterId, selectedArcId, arcs]);
 
   const onNodesChange = (changes: any) => {
     setNodes((nds) => applyNodeChanges(changes, nds));
@@ -247,7 +274,42 @@ export default function CharacterRelationshipGraph({
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {characters.length === 0 ? (
+      {/* Arc filter chips */}
+      {arcs.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          zIndex: 10,
+          display: 'flex',
+          gap: '8px',
+          flexWrap: 'wrap',
+          maxWidth: '400px',
+          justifyContent: 'flex-end'
+        }}>
+          <Chip
+            color={!selectedArcId ? 'secondary' : 'default'}
+            variant={!selectedArcId ? 'solid' : 'bordered'}
+            onClick={() => setSelectedArcId(null)}
+            style={{ cursor: 'pointer' }}
+          >
+            All Characters
+          </Chip>
+          {arcs.map((arc) => (
+            <Chip
+              key={arc.id}
+              color={selectedArcId === arc.id ? 'secondary' : 'default'}
+              variant={selectedArcId === arc.id ? 'solid' : 'bordered'}
+              onClick={() => setSelectedArcId(arc.id)}
+              style={{ cursor: 'pointer' }}
+            >
+              {arc.name}
+            </Chip>
+          ))}
+        </div>
+      )}
+
+      {filteredCharacters.length === 0 ? (
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -256,7 +318,7 @@ export default function CharacterRelationshipGraph({
           color: '#999',
           fontSize: '16px'
         }}>
-          No characters to display
+          {selectedArcId ? 'No characters in this arc' : 'No characters to display'}
         </div>
       ) : (
         <ReactFlow
@@ -425,7 +487,7 @@ export default function CharacterRelationshipGraph({
         </div>
       )}
 
-      {edges.length === 0 && characters.length > 0 && (
+      {edges.length === 0 && filteredCharacters.length > 0 && (
         <div style={{
           position: 'absolute',
           top: '50%',

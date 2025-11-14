@@ -1,8 +1,72 @@
-# Visual Story Analysis & Glossary Builder
+# Visual Story Writing & Translation System
 
-## New Features
+## 🆕 Translation System (NEW!)
 
-This application features an intelligent glossary builder that analyzes uploaded novels and provides a visual, interactive interface for managing story elements with comprehensive character and event information.
+**The translation system is now the default home screen!**
+
+When you access `http://localhost:5173`, you'll see a complete Korean-to-Japanese/English translation system with:
+
+### ✨ Features
+
+- **📚 Glossary Builder Projects**: Create and manage multiple glossary projects
+  - **AI-Powered Extraction**: Automatic analysis with Gemini 2.5 Pro (8000 char chunks)
+  - **Instant Processing**: Glossary extraction happens during project creation
+  - Project list view with statistics (characters, events, locations, terms)
+  - Create new projects with Korean text input (file upload or paste)
+  - Visual graph interface for analyzing story elements
+  - Real-time editing of characters, events, locations
+  - Character relationship visualization
+  - Timeline view for chronological events
+  - JSON export for translation projects
+  - Select existing projects to continue editing
+- **📝 Translation Projects**: Multi-stage AI processing with quality control
+  - Automatic glossary extraction from Korean text
+  - Tag-Translation-Enhancement-Quality-Proofread-Layout pipeline
+  - Progress tracking and task management
+  - Background processing with cancel capability
+- **🎨 Modern UI**: Clean, intuitive interface with dual project types
+  - Tabbed interface: Translation Projects / Glossary Builder
+  - Project cards with statistics and quick actions
+  - Real-time status updates
+- **💾 Project Persistence**: All data saved in browser localStorage
+
+### 🚀 Quick Start
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Add API key to .env (optional for UI exploration)
+VITE_GEMINI_API_KEY=your_key_here
+
+# 3. Run the app
+npm run dev
+
+# 4. Open http://localhost:5173
+```
+
+**See `QUICK_START.md` for a complete walkthrough!**
+
+### 📖 Documentation
+
+- **QUICK_START.md** - Get started in 5 minutes
+- **TRANSLATION_SETUP.md** - Complete setup guide
+- **TRANSLATION_UI_GUIDE.md** - Detailed UI walkthrough
+- **SIMPLE_WORKFLOW.md** - Workflow engine architecture
+- **BROWSER_COMPATIBILITY.md** - Technical background
+
+### 🔗 Navigation
+
+- **Home (Translation System)**: `http://localhost:5173` or `/#/`
+- **Original Visual Story Writing**: `/#/launcher`
+- **Glossary Builder**: `/#/glossary-builder`
+- **Project Manager**: `/#/project-manager`
+
+---
+
+## Visual Story Analysis & Glossary Builder (Original System)
+
+This application also features an intelligent glossary builder that analyzes uploaded novels and provides a visual, interactive interface for managing story elements with comprehensive character and event information.
 
 ### 📚 Main Features
 
