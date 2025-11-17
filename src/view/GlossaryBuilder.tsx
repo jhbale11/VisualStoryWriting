@@ -13,6 +13,8 @@ import ActionTimeline from './actionTimeline/ActionTimeline';
 import EntitiesEditor from './entityActionView/EntitiesEditor';
 import GlossaryEditPanel from './glossary/GlossaryEditPanel';
 import CharacterRelationshipGraph from './glossary/CharacterRelationshipGraph';
+import ArcCharacterMatrix from './glossary/ArcCharacterMatrix';
+import ArcRelationshipView from './glossary/ArcRelationshipView';
 import LocationsEditor from './locationView/LocationsEditor';
 
 function StoryFeaturesTab() {
@@ -728,9 +730,11 @@ function StoryFeaturesTab() {
 
 export default function GlossaryBuilder() {
   const [isExtracting, setIsExtracting] = useState(false);
-  const [selectedTab, setSelectedTab] = useState('entities');
-  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations' | 'terms' | 'features'>('characters');
+  const [selectedTab, setSelectedTab] = useState('arc-overview');
+  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations' | 'terms' | 'features' | 'arcs'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedArcFilter, setSelectedArcFilter] = useState<string | null>(null);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<{ type: 'character' | 'event' | 'location' | 'term', item: any } | null>(null);
   const [editingTerm, setEditingTerm] = useState<{ id?: string; original: string; translation: string; context: string; category: string; notes: string } | null>(null);
   const escapePressed = useKeyPress(['Escape']);
@@ -746,6 +750,7 @@ export default function GlossaryBuilder() {
   const glossaryEvents = useGlossaryStore(state => state.events);
   const glossaryLocations = useGlossaryStore(state => state.locations);
   const glossaryTerms = useGlossaryStore(state => state.terms);
+  const glossaryArcs = useGlossaryStore(state => state.arcs);
   const storySummary = useGlossaryStore(state => state.story_summary);
   const keyEvents = useGlossaryStore(state => state.key_events_and_arcs);
   const honorifics = useGlossaryStore(state => state.honorifics);
@@ -760,6 +765,31 @@ export default function GlossaryBuilder() {
   const addTerm = useGlossaryStore(state => state.addTerm);
   const updateTerm = useGlossaryStore(state => state.updateTerm);
   const deleteTerm = useGlossaryStore(state => state.deleteTerm);
+  
+  // Filter characters and events by arc
+  const filteredCharacters = selectedArcFilter
+    ? glossaryCharacters.filter(char => {
+        const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
+        if (!arc) return true;
+        return arc.characters.some(arcChar => {
+          const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
+          return charName.toLowerCase() === char.name.toLowerCase() ||
+                 charName.toLowerCase() === char.korean_name?.toLowerCase();
+        });
+      })
+    : glossaryCharacters;
+
+  const filteredEvents = selectedArcFilter
+    ? glossaryEvents.filter(event => {
+        const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
+        if (!arc) return true;
+        // Check if event's chunk is within arc's range
+        if (arc.start_chunk !== undefined && arc.end_chunk !== undefined) {
+          return event.chunk_index >= arc.start_chunk && event.chunk_index <= arc.end_chunk;
+        }
+        return true;
+      })
+    : glossaryEvents;
 
   const setEntityNodes = useModelStore(state => state.setEntityNodes);
   const setActionEdges = useModelStore(state => state.setActionEdges);
@@ -782,6 +812,7 @@ export default function GlossaryBuilder() {
             events: JSON.parse(JSON.stringify(glossaryData.events || [])),
             locations: JSON.parse(JSON.stringify(glossaryData.locations || [])),
             terms: JSON.parse(JSON.stringify(glossaryData.terms || [])),
+            arcs: JSON.parse(JSON.stringify(glossaryData.arcs || [])),
             fullText: glossaryData.fullText || '',
             story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
             key_events_and_arcs: JSON.parse(JSON.stringify(glossaryData.key_events_and_arcs || [])),
@@ -868,6 +899,7 @@ export default function GlossaryBuilder() {
             events: JSON.parse(JSON.stringify(glossaryState.events)),
             locations: JSON.parse(JSON.stringify(glossaryState.locations)),
             terms: JSON.parse(JSON.stringify(glossaryState.terms)),
+            arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
             fullText: glossaryState.fullText,
             story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
             key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
@@ -904,7 +936,8 @@ export default function GlossaryBuilder() {
     glossaryCharacters, 
     glossaryEvents, 
     glossaryLocations, 
-    glossaryTerms, 
+    glossaryTerms,
+    glossaryArcs,
     storySummary,
     keyEvents,
     honorifics,
@@ -992,6 +1025,7 @@ export default function GlossaryBuilder() {
               events: JSON.parse(JSON.stringify(glossaryState.events)),
               locations: JSON.parse(JSON.stringify(glossaryState.locations)),
               terms: JSON.parse(JSON.stringify(glossaryState.terms)),
+              arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
               fullText: glossaryState.fullText,
               story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
               key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
@@ -1041,13 +1075,143 @@ export default function GlossaryBuilder() {
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%' }}>
         <div id="visual-container" className='flex flex-col' style={{ position: 'relative', width: '60%' }}>
           <div style={{ width: '100%', height: `${topHeight}%`, background: '#F3F4F6', borderBottom: '1px solid #DDDDDF' }} ref={visualPanelRef}>
+            {selectedTab === 'arc-overview' && (
+              <div style={{ width: '100%', height: '100%', background: '#F9FAFB' }}>
+                <ArcCharacterMatrix
+                  arcs={glossaryArcs}
+                  characters={glossaryCharacters}
+                  selectedArcId={selectedArcFilter}
+                  onArcSelect={(arcId) => setSelectedArcFilter(arcId)}
+                  onCharacterSelect={(charId) => {
+                    const char = glossaryCharacters.find(c => c.id === charId);
+                    if (char) {
+                      setEditingItem({ type: 'character', item: char });
+                      setSelectedCharacterId(charId);
+                    }
+                  }}
+                />
+              </div>
+            )}
+            {selectedTab === 'arc-relationships' && (
+              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', overflowY: 'auto' }}>
+                {glossaryArcs.length === 0 ? (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    padding: '40px',
+                    textAlign: 'center',
+                    color: '#999'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '64px', marginBottom: '20px' }}>🔗</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>No Arcs Yet</div>
+                      <div style={{ fontSize: '14px' }}>
+                        Process text to extract story arcs and character relationships
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '20px' }}>
+                    {/* Arc Selector */}
+                    <div style={{ marginBottom: '20px', background: 'white', padding: '15px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px' }}>
+                        Select Arc to View Relationships:
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {glossaryArcs.map((arc) => (
+                          <Chip
+                            key={arc.id}
+                            onClick={() => setSelectedArcFilter(arc.id)}
+                            color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
+                            variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
+                            size="lg"
+                            style={{ cursor: 'pointer', fontSize: '13px' }}
+                          >
+                            {arc.name}
+                            {arc.theme && ` (${arc.theme})`}
+                          </Chip>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Arc Relationships View */}
+                    {selectedArcFilter && (
+                      <ArcRelationshipView
+                        arc={glossaryArcs.find(a => a.id === selectedArcFilter)!}
+                        characters={glossaryCharacters}
+                      />
+                    )}
+                    
+                    {!selectedArcFilter && (
+                      <div style={{
+                        background: 'white',
+                        padding: '40px',
+                        borderRadius: '12px',
+                        textAlign: 'center',
+                        color: '#999'
+                      }}>
+                        <div style={{ fontSize: '48px', marginBottom: '12px' }}>👆</div>
+                        <div>Select an arc above to view its relationships</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {selectedTab === 'entities' && <ReactFlowProvider><EntitiesEditor /></ReactFlowProvider>}
             {selectedTab === 'locations' && <ReactFlowProvider><LocationsEditor /></ReactFlowProvider>}
             {selectedTab === 'relations' && (
-              <div style={{ width: '100%', height: '100%', background: '#F9FAFB' }}>
+              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', position: 'relative' }}>
+                {/* Arc filter for relations */}
+                {glossaryArcs.length > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '60px',
+                    left: '10px',
+                    zIndex: 15,
+                    background: 'white',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+                    maxWidth: '250px'
+                  }}>
+                    <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>
+                      Filter by Arc:
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <Button
+                        size="sm"
+                        color={!selectedArcFilter ? 'secondary' : 'default'}
+                        variant={!selectedArcFilter ? 'solid' : 'bordered'}
+                        onClick={() => setSelectedArcFilter(null)}
+                        style={{ justifyContent: 'flex-start', fontSize: '12px' }}
+                      >
+                        All Characters
+                      </Button>
+                      {glossaryArcs.map((arc) => (
+                        <Button
+                          key={arc.id}
+                          size="sm"
+                          color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
+                          variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
+                          onClick={() => setSelectedArcFilter(arc.id)}
+                          style={{ justifyContent: 'flex-start', fontSize: '12px' }}
+                        >
+                          {arc.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <CharacterRelationshipGraph
                   characters={glossaryCharacters}
-                  onCharacterSelect={(char) => {}}
+                  selectedCharacterId={selectedCharacterId}
+                  onCharacterSelect={(char) => {
+                    setEditingItem({ type: 'character', item: char });
+                    setSelectedCharacterId(char.id);
+                  }}
                 />
               </div>
             )}
@@ -1060,9 +1224,11 @@ export default function GlossaryBuilder() {
               style={{ position: 'absolute', left: '50%', top: 10, transform: 'translate(-50%, 0)' }}
               classNames={{ tabList: 'bg-white' }}
             >
+              <Tab key={'arc-overview'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>📖 Arc Overview</span>} />
+              <Tab key={'arc-relationships'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>🔗 Arc Relations</span>} />
               <Tab key={'entities'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters & Events</span>} />
               <Tab key={'locations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
-              <Tab key={'relations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>Relations</span>} />
+              <Tab key={'relations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>👥 All Relations</span>} />
             </Tabs>
 
             <Button style={{ position: 'absolute', right: 10, top: 10, fontSize: 18 }} isIconOnly onClick={(e) => {
@@ -1077,7 +1243,7 @@ export default function GlossaryBuilder() {
 
             <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', display: 'flex', gap: '10px', background: 'white', padding: '10px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
               <span style={{ fontSize: '14px', color: '#666' }}>
-                {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
+                {glossaryArcs.length} arcs · {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
               </span>
             </div>
           </div>
@@ -1121,6 +1287,39 @@ export default function GlossaryBuilder() {
               startContent={<FaSearch />}
               size="sm"
             />
+            
+            {/* Arc Filter */}
+            {glossaryArcs.length > 0 && (
+              <div style={{ marginTop: '15px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>
+                  Filter by Arc:
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <Chip
+                    onClick={() => setSelectedArcFilter(null)}
+                    color={!selectedArcFilter ? 'primary' : 'default'}
+                    variant={!selectedArcFilter ? 'solid' : 'bordered'}
+                    size="sm"
+                    style={{ cursor: 'pointer' }}
+                  >
+                    All
+                  </Chip>
+                  {glossaryArcs.map((arc) => (
+                    <Chip
+                      key={arc.id}
+                      onClick={() => setSelectedArcFilter(arc.id)}
+                      color={selectedArcFilter === arc.id ? 'primary' : 'default'}
+                      variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
+                      size="sm"
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {arc.name}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+            )}
+            
             <div style={{ display: 'flex', gap: '10px', marginTop: '15px', flexWrap: 'wrap' }}>
               <Chip
                 onClick={() => setGlossaryTab('characters')}
@@ -1128,7 +1327,7 @@ export default function GlossaryBuilder() {
                 variant={glossaryTab === 'characters' ? 'solid' : 'bordered'}
                 style={{ cursor: 'pointer' }}
               >
-                Characters ({glossaryCharacters.length})
+                Characters ({filteredCharacters.length})
               </Chip>
               <Chip
                 onClick={() => setGlossaryTab('events')}
@@ -1136,7 +1335,7 @@ export default function GlossaryBuilder() {
                 variant={glossaryTab === 'events' ? 'solid' : 'bordered'}
                 style={{ cursor: 'pointer' }}
               >
-                Events ({glossaryEvents.length})
+                Events ({filteredEvents.length})
               </Chip>
               <Chip
                 onClick={() => setGlossaryTab('locations')}
@@ -1155,6 +1354,14 @@ export default function GlossaryBuilder() {
                 Terms ({glossaryTerms.length})
               </Chip>
               <Chip
+                onClick={() => setGlossaryTab('arcs')}
+                color={glossaryTab === 'arcs' ? 'secondary' : 'default'}
+                variant={glossaryTab === 'arcs' ? 'solid' : 'bordered'}
+                style={{ cursor: 'pointer' }}
+              >
+                Arcs ({glossaryArcs.length})
+              </Chip>
+              <Chip
                 onClick={() => setGlossaryTab('features')}
                 color={glossaryTab === 'features' ? 'secondary' : 'default'}
                 variant={glossaryTab === 'features' ? 'solid' : 'bordered'}
@@ -1170,7 +1377,7 @@ export default function GlossaryBuilder() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
             {glossaryTab === 'characters' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {glossaryCharacters
+                {filteredCharacters
                   .filter(char => char.name.toLowerCase().includes(searchQuery.toLowerCase()))
                   .map((char) => (
                     <Card
@@ -1219,7 +1426,7 @@ export default function GlossaryBuilder() {
 
             {glossaryTab === 'events' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {glossaryEvents
+                {filteredEvents
                   .filter(event => event.name.toLowerCase().includes(searchQuery.toLowerCase()))
                   .map((event) => (
                     <Card
@@ -1445,6 +1652,139 @@ export default function GlossaryBuilder() {
                       </CardBody>
                     </Card>
                   ))}
+              </div>
+            )}
+
+            {glossaryTab === 'arcs' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {glossaryArcs.length === 0 ? (
+                  <p style={{ color: '#888', fontStyle: 'italic' }}>
+                    No arcs extracted yet. Arcs will be automatically detected during glossary extraction.
+                  </p>
+                ) : (
+                  glossaryArcs.map((arc, index) => (
+                    <Card key={arc.id} style={{ background: '#f9fafb' }}>
+                      <CardHeader>
+                        <div style={{ width: '100%' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                            <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0, color: '#667eea' }}>
+                              Arc {index + 1}: {arc.name}
+                            </h3>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {arc.theme && (
+                                <Chip size="sm" color="secondary" variant="bordered">
+                                  {arc.theme}
+                                </Chip>
+                              )}
+                              <Chip size="sm" color="primary" variant="flat">
+                                Chunks {arc.start_chunk !== undefined ? arc.start_chunk : '?'} - {arc.end_chunk !== undefined ? arc.end_chunk : '?'}
+                              </Chip>
+                            </div>
+                          </div>
+                          <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+                            {arc.description}
+                          </p>
+                        </div>
+                      </CardHeader>
+                      <Divider />
+                      <CardBody>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {arc.characters && arc.characters.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                                Characters ({arc.characters.length})
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {arc.characters.map((arcChar, idx) => {
+                                  const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
+                                  const role = typeof arcChar === 'string' ? '' : arcChar.role_in_arc;
+                                  return (
+                                    <Chip 
+                                      key={idx} 
+                                      size="sm" 
+                                      variant="flat" 
+                                      color="secondary"
+                                      title={role || undefined}
+                                    >
+                                      {charName} {role && `(${role})`}
+                                    </Chip>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {arc.relationships && arc.relationships.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                                Relationships ({arc.relationships.length})
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {arc.relationships.slice(0, 3).map((rel, idx) => (
+                                  <div key={idx} style={{ fontSize: '12px', color: '#555', padding: '6px', background: 'white', borderRadius: '6px' }}>
+                                    <span style={{ fontWeight: 'bold' }}>{rel.character_a}</span>
+                                    {' '}{rel.sentiment === 'positive' ? '↔️' : rel.sentiment === 'negative' ? '⚔️' : '—'}{' '}
+                                    <span style={{ fontWeight: 'bold' }}>{rel.character_b}</span>
+                                    {': '}{rel.description}
+                                  </div>
+                                ))}
+                                {arc.relationships.length > 3 && (
+                                  <div style={{ fontSize: '11px', color: '#888', fontStyle: 'italic' }}>
+                                    +{arc.relationships.length - 3} more relationships
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {arc.key_events && arc.key_events.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                                Key Events ({arc.key_events.length})
+                              </div>
+                              <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', color: '#555' }}>
+                                {arc.key_events.map((event, idx) => (
+                                  <li key={idx} style={{ marginBottom: '4px' }}>{event}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {arc.background_changes && arc.background_changes.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                                Background Changes ({arc.background_changes.length})
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#555' }}>
+                                {arc.background_changes.join(' • ')}
+                              </div>
+                            </div>
+                          )}
+
+                          {arc.terms && arc.terms.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                                Translation Terms ({arc.terms.length})
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {arc.terms.slice(0, 5).map((term, idx) => (
+                                  <Chip key={idx} size="sm" variant="bordered" style={{ fontSize: '10px' }}>
+                                    {term.original} → {term.translation}
+                                  </Chip>
+                                ))}
+                                {arc.terms.length > 5 && (
+                                  <Chip size="sm" variant="flat">
+                                    +{arc.terms.length - 5} more
+                                  </Chip>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </CardBody>
+                    </Card>
+                  ))
+                )}
               </div>
             )}
 

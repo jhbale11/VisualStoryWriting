@@ -90,10 +90,11 @@ export default function CharacterRelationshipGraph({
         const selectedArc = arcs.find(a => a.id === selectedArcId);
         if (!selectedArc) return characters;
         return characters.filter(char =>
-          selectedArc.characters.some(arcChar =>
-            arcChar.toLowerCase() === char.name.toLowerCase() ||
-            arcChar.toLowerCase() === char.korean_name?.toLowerCase()
-          )
+          selectedArc.characters.some(arcChar => {
+            const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
+            return charName.toLowerCase() === char.name.toLowerCase() ||
+                   charName.toLowerCase() === char.korean_name?.toLowerCase();
+          })
         );
       })()
     : characters;
