@@ -7,7 +7,7 @@ interface Props {
 }
 
 export default function ArcRelationshipView({ arc, characters }: Props) {
-  if (!arc || arc.relationships.length === 0) {
+  if (!arc || !arc.relationships || arc.relationships.length === 0) {
     return (
       <div style={{
         padding: '40px',

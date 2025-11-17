@@ -59,7 +59,7 @@ export default function ArcCharacterMatrix({
   // Count relationships per arc (from arc's own relationship data)
   const arcRelationshipCount: Record<string, number> = {};
   arcs.forEach(arc => {
-    arcRelationshipCount[arc.id] = arc.relationships.length;
+    arcRelationshipCount[arc.id] = arc.relationships?.length || 0;
   });
 
   const selectedArc = selectedArcId ? arcs.find(a => a.id === selectedArcId) : null;
@@ -159,13 +159,13 @@ export default function ArcCharacterMatrix({
                   <div>
                     <span style={{ color: '#888' }}>Key Events: </span>
                     <span style={{ fontWeight: 'bold', color: '#667eea' }}>
-                      {selectedArc.key_events.length}
+                      {selectedArc.key_events?.length || 0}
                     </span>
                   </div>
                   <div>
                     <span style={{ color: '#888' }}>Terms: </span>
                     <span style={{ fontWeight: 'bold', color: '#667eea' }}>
-                      {selectedArc.terms.length}
+                      {selectedArc.terms?.length || 0}
                     </span>
                   </div>
                   <div>
@@ -177,7 +177,7 @@ export default function ArcCharacterMatrix({
                 </div>
 
                 {/* Key Events */}
-                {selectedArc.key_events.length > 0 && (
+                {selectedArc.key_events && selectedArc.key_events.length > 0 && (
                   <div>
                     <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
                       Key Events:
@@ -208,7 +208,7 @@ export default function ArcCharacterMatrix({
                 )}
 
                 {/* Arc-specific Terms */}
-                {selectedArc.terms.length > 0 && (
+                {selectedArc.terms && selectedArc.terms.length > 0 && (
                   <div>
                     <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
                       Translation Terms:
