@@ -878,17 +878,11 @@ export default function GlossaryBuilder() {
           
           // Create a deep copy to avoid reference issues
           const glossarySnapshot = {
-            characters: JSON.parse(JSON.stringify(glossaryState.characters)),
-            events: JSON.parse(JSON.stringify(glossaryState.events)),
-            locations: JSON.parse(JSON.stringify(glossaryState.locations)),
-            terms: JSON.parse(JSON.stringify(glossaryState.terms)),
             arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
             fullText: glossaryState.fullText,
             story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
-            key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
             honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
             recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
-            world_building_notes: JSON.parse(JSON.stringify(glossaryState.world_building_notes)),
             style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
             target_language: glossaryState.target_language,
           };
@@ -916,16 +910,10 @@ export default function GlossaryBuilder() {
 
     return () => clearTimeout(saveTimer);
   }, [
-    glossaryCharacters, 
-    glossaryEvents, 
-    glossaryLocations, 
-    glossaryTerms,
     glossaryArcs,
     storySummary,
-    keyEvents,
     honorifics,
     recurringPhrases,
-    worldBuildingNotes,
     styleGuide,
     targetLanguage,
     fullText
@@ -1004,17 +992,11 @@ export default function GlossaryBuilder() {
 
             // Create deep copy to avoid reference issues
             const glossarySnapshot = {
-              characters: JSON.parse(JSON.stringify(glossaryState.characters)),
-              events: JSON.parse(JSON.stringify(glossaryState.events)),
-              locations: JSON.parse(JSON.stringify(glossaryState.locations)),
-              terms: JSON.parse(JSON.stringify(glossaryState.terms)),
               arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
               fullText: glossaryState.fullText,
               story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
-              key_events_and_arcs: JSON.parse(JSON.stringify(glossaryState.key_events_and_arcs)),
               honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
               recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
-              world_building_notes: JSON.parse(JSON.stringify(glossaryState.world_building_notes)),
               style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
               target_language: glossaryState.target_language,
             };
