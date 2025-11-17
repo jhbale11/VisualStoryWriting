@@ -10,14 +10,8 @@ interface Props {
 }
 
 export default function GlossaryEditPanel({ type, item, onClose }: Props) {
-  const updateCharacter = useGlossaryStore(state => state.updateCharacter);
-  const updateEvent = useGlossaryStore(state => state.updateEvent);
-  const updateLocation = useGlossaryStore(state => state.updateLocation);
-  const updateTerm = useGlossaryStore(state => state.updateTerm);
-  const deleteCharacter = useGlossaryStore(state => state.deleteCharacter);
-  const deleteEvent = useGlossaryStore(state => state.deleteEvent);
-  const deleteLocation = useGlossaryStore(state => state.deleteLocation);
-  const deleteTerm = useGlossaryStore(state => state.deleteTerm);
+  const arcs = useGlossaryStore(state => state.arcs);
+  const updateArc = useGlossaryStore(state => state.updateArc);
 
   const [editData, setEditData] = useState<any>(item || {});
 
@@ -30,32 +24,76 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
 
   if (!item) return null;
 
+  // Find which arc contains this item
+  const findArcContainingItem = () => {
+    for (const arc of arcs) {
+      if (type === 'character' && arc.characters?.some(c => c.id === item.id)) {
+        return arc;
+      } else if (type === 'event' && arc.events?.some(e => e.id === item.id)) {
+        return arc;
+      } else if (type === 'location' && arc.locations?.some(l => l.id === item.id)) {
+        return arc;
+      } else if (type === 'term' && arc.terms?.some(t => t.id === item.id)) {
+        return arc;
+      }
+    }
+    return null;
+  };
+
   const handleSave = () => {
+    const arc = findArcContainingItem();
+    if (!arc) {
+      console.error('Arc not found for item:', item.id);
+      return;
+    }
+
     // Ensure id is preserved
     const dataToSave = { ...editData, id: item.id };
     
     if (type === 'character') {
-      updateCharacter(item.id, dataToSave);
+      const updatedCharacters = (arc.characters || []).map(c => 
+        c.id === item.id ? dataToSave : c
+      );
+      updateArc(arc.id, { characters: updatedCharacters });
     } else if (type === 'event') {
-      updateEvent(item.id, dataToSave);
+      const updatedEvents = (arc.events || []).map(e => 
+        e.id === item.id ? dataToSave : e
+      );
+      updateArc(arc.id, { events: updatedEvents });
     } else if (type === 'location') {
-      updateLocation(item.id, dataToSave);
+      const updatedLocations = (arc.locations || []).map(l => 
+        l.id === item.id ? dataToSave : l
+      );
+      updateArc(arc.id, { locations: updatedLocations });
     } else if (type === 'term') {
-      updateTerm(item.id, dataToSave);
+      const updatedTerms = (arc.terms || []).map(t => 
+        t.id === item.id ? dataToSave : t
+      );
+      updateArc(arc.id, { terms: updatedTerms });
     }
     onClose();
   };
 
   const handleDelete = () => {
     if (confirm('Are you sure you want to delete this item?')) {
+      const arc = findArcContainingItem();
+      if (!arc) {
+        console.error('Arc not found for item:', item.id);
+        return;
+      }
+
       if (type === 'character') {
-        deleteCharacter(item.id);
+        const updatedCharacters = (arc.characters || []).filter(c => c.id !== item.id);
+        updateArc(arc.id, { characters: updatedCharacters });
       } else if (type === 'event') {
-        deleteEvent(item.id);
+        const updatedEvents = (arc.events || []).filter(e => e.id !== item.id);
+        updateArc(arc.id, { events: updatedEvents });
       } else if (type === 'location') {
-        deleteLocation(item.id);
+        const updatedLocations = (arc.locations || []).filter(l => l.id !== item.id);
+        updateArc(arc.id, { locations: updatedLocations });
       } else if (type === 'term') {
-        deleteTerm(item.id);
+        const updatedTerms = (arc.terms || []).filter(t => t.id !== item.id);
+        updateArc(arc.id, { terms: updatedTerms });
       }
       onClose();
     }
