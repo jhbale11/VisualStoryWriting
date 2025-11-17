@@ -693,49 +693,92 @@ export default function GlossaryBuilder() {
 
   const visualPanelRef = React.createRef<HTMLDivElement>();
 
-  const glossaryCharacters = useGlossaryStore(state => state.characters);
-  const glossaryEvents = useGlossaryStore(state => state.events);
-  const glossaryLocations = useGlossaryStore(state => state.locations);
-  const glossaryTerms = useGlossaryStore(state => state.terms);
   const glossaryArcs = useGlossaryStore(state => state.arcs);
   const storySummary = useGlossaryStore(state => state.story_summary);
-  const keyEvents = useGlossaryStore(state => state.key_events_and_arcs);
   const honorifics = useGlossaryStore(state => state.honorifics);
   const recurringPhrases = useGlossaryStore(state => state.recurring_phrases);
-  const worldBuildingNotes = useGlossaryStore(state => state.world_building_notes);
   const styleGuide = useGlossaryStore(state => state.style_guide);
   const targetLanguage = useGlossaryStore(state => state.target_language);
   const fullText = useGlossaryStore(state => state.fullText);
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
-  const addTerm = useGlossaryStore(state => state.addTerm);
-  const updateTerm = useGlossaryStore(state => state.updateTerm);
-  const deleteTerm = useGlossaryStore(state => state.deleteTerm);
+  const updateArc = useGlossaryStore(state => state.updateArc);
+  
+  // Extract all data from arcs
+  const glossaryCharacters = React.useMemo(() => {
+    const chars: GlossaryCharacter[] = [];
+    const seenIds = new Set<string>();
+    
+    glossaryArcs.forEach(arc => {
+      (arc.characters || []).forEach(char => {
+        if (!seenIds.has(char.id)) {
+          chars.push(char);
+          seenIds.add(char.id);
+        }
+      });
+    });
+    return chars;
+  }, [glossaryArcs]);
+
+  const glossaryEvents = React.useMemo(() => {
+    const events: GlossaryEvent[] = [];
+    const seenIds = new Set<string>();
+    
+    glossaryArcs.forEach(arc => {
+      (arc.events || []).forEach(event => {
+        if (!seenIds.has(event.id)) {
+          events.push(event);
+          seenIds.add(event.id);
+        }
+      });
+    });
+    return events;
+  }, [glossaryArcs]);
+
+  const glossaryLocations = React.useMemo(() => {
+    const locations: GlossaryLocation[] = [];
+    const seenIds = new Set<string>();
+    
+    glossaryArcs.forEach(arc => {
+      (arc.locations || []).forEach(loc => {
+        if (!seenIds.has(loc.id)) {
+          locations.push(loc);
+          seenIds.add(loc.id);
+        }
+      });
+    });
+    return locations;
+  }, [glossaryArcs]);
+
+  const glossaryTerms = React.useMemo(() => {
+    const terms: GlossaryTerm[] = [];
+    const seenIds = new Set<string>();
+    
+    glossaryArcs.forEach(arc => {
+      (arc.terms || []).forEach(term => {
+        if (!seenIds.has(term.id)) {
+          terms.push(term);
+          seenIds.add(term.id);
+        }
+      });
+    });
+    return terms;
+  }, [glossaryArcs]);
   
   // Filter characters and events by arc
   const filteredCharacters = selectedArcFilter
-    ? glossaryCharacters.filter(char => {
+    ? (() => {
         const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
-        if (!arc) return true;
-        return arc.characters.some(arcChar => {
-          const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
-          return charName.toLowerCase() === char.name.toLowerCase() ||
-                 charName.toLowerCase() === char.korean_name?.toLowerCase();
-        });
-      })
+        return arc ? (arc.characters || []) : [];
+      })()
     : glossaryCharacters;
 
   const filteredEvents = selectedArcFilter
-    ? glossaryEvents.filter(event => {
+    ? (() => {
         const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
-        if (!arc) return true;
-        // Check if event's chunk is within arc's range
-        if (arc.start_chunk !== undefined && arc.end_chunk !== undefined) {
-          return event.chunk_index >= arc.start_chunk && event.chunk_index <= arc.end_chunk;
-        }
-        return true;
-      })
+        return arc ? (arc.events || []) : [];
+      })()
     : glossaryEvents;
 
   const setEntityNodes = useModelStore(state => state.setEntityNodes);
@@ -755,33 +798,26 @@ export default function GlossaryBuilder() {
           // Load glossary data with deep copy to avoid reference issues
           const glossaryData = project.glossary;
           useGlossaryStore.setState({
-            characters: JSON.parse(JSON.stringify(glossaryData.characters || [])),
-            events: JSON.parse(JSON.stringify(glossaryData.events || [])),
-            locations: JSON.parse(JSON.stringify(glossaryData.locations || [])),
-            terms: JSON.parse(JSON.stringify(glossaryData.terms || [])),
             arcs: JSON.parse(JSON.stringify(glossaryData.arcs || [])),
             fullText: glossaryData.fullText || '',
             story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
-            key_events_and_arcs: JSON.parse(JSON.stringify(glossaryData.key_events_and_arcs || [])),
             honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
             recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
-            world_building_notes: JSON.parse(JSON.stringify(glossaryData.world_building_notes || [])),
             style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || {
-              tone: '',
+              name_format: 'english_given_name english_surname',
+              tone: 'Standard',
               formality_level: 'medium',
               themes: [],
-              genre: '',
+              genre: 'Web Novel',
               sub_genres: [],
-              content_rating: '',
-              name_format: '',
-              honorific_usage: '',
-              formal_speech_level: '',
-              dialogue_style: '',
-              narrative_vocabulary: '',
+              content_rating: 'Teen',
+              honorific_usage: 'Keep Korean honorifics with explanation on first use',
+              formal_speech_level: 'Match English formality to Korean speech level',
+              dialogue_style: 'natural',
               narrative_style: {
-                point_of_view: '',
-                tense: '',
-                voice: '',
+                point_of_view: 'third-person',
+                tense: 'past',
+                voice: 'neutral',
                 common_expressions: [],
                 atmosphere_descriptors: []
               }
