@@ -258,7 +258,7 @@ export default function ArcCharacterMatrix({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {filteredCharacters.map((char) => {
               const appearingArcs = Array.from(characterArcAppearance[char.id] || []);
-              const relationshipCount = char.relationships.filter(rel => {
+              const relationshipCount = (char.relationships || []).filter(rel => {
                 if (!selectedArcId) return true;
                 return !rel.arc_id || rel.arc_id === selectedArc?.name || rel.arc_id === selectedArc?.id;
               }).length;

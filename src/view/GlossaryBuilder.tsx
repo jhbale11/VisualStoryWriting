@@ -718,6 +718,8 @@ export default function GlossaryBuilder() {
         }
       });
     });
+    
+    console.log(`📊 Extracted ${chars.length} unique characters from ${glossaryArcs.length} arcs`);
     return chars;
   }, [glossaryArcs]);
 
@@ -1350,9 +1352,35 @@ export default function GlossaryBuilder() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
             {glossaryTab === 'characters' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {filteredCharacters
-                  .filter(char => char.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                  .map((char) => (
+                {filteredCharacters.length === 0 ? (
+                  <div style={{
+                    padding: '60px 20px',
+                    textAlign: 'center',
+                    color: '#999',
+                    background: '#f9fafb',
+                    borderRadius: '12px'
+                  }}>
+                    <div style={{ fontSize: '64px', marginBottom: '20px' }}>👥</div>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>
+                      No Characters Found
+                    </div>
+                    <div style={{ fontSize: '14px', marginBottom: '20px' }}>
+                      {glossaryArcs.length === 0
+                        ? 'Extract glossary from text to see characters'
+                        : selectedArcFilter
+                          ? 'No characters in this arc'
+                          : 'Characters will appear here once extracted'}
+                    </div>
+                    {glossaryArcs.length > 0 && (
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        💡 Tip: Check if arcs contain character data in the Arcs tab
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  filteredCharacters
+                    .filter(char => char.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map((char) => (
                     <Card
                       key={char.id}
                       isPressable
@@ -1377,7 +1405,7 @@ export default function GlossaryBuilder() {
                         <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
                           {char.description}
                         </p>
-                        {char.traits.length > 0 && (
+                        {char.traits && char.traits.length > 0 && (
                           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
                             {char.traits.slice(0, 3).map((trait, idx) => (
                               <Chip key={idx} size="sm" variant="flat" color="secondary">
@@ -1393,7 +1421,8 @@ export default function GlossaryBuilder() {
                         )}
                       </CardBody>
                     </Card>
-                  ))}
+                  ))
+                )}
               </div>
             )}
 

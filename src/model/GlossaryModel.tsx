@@ -29,8 +29,8 @@ export interface GlossaryCharacter {
   korean_name?: string;
   description: string;
   physical_appearance?: string;
-  personality: string;
-  traits: string[];
+  personality?: string;
+  traits?: string[];
   emoji: string;
   age?: string;
   gender?: string;
@@ -39,7 +39,7 @@ export interface GlossaryCharacter {
   abilities?: string[];
   speech_style?: string;
   name_variants?: { [key: string]: string }; // e.g., {"nickname": "별명", "title": "직함"}
-  relationships: Array<CharacterRelationshipInArc>;
+  relationships?: Array<CharacterRelationshipInArc>;
 }
 
 export interface GlossaryEvent {
@@ -995,7 +995,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       data: {
         name: char.name,
         emoji: char.emoji,
-        properties: char.traits.slice(0, 3).map(trait => ({
+        properties: (char.traits || []).slice(0, 3).map(trait => ({
           name: trait,
           value: 5
         }))
