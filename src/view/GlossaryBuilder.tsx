@@ -19,20 +19,16 @@ import LocationsEditor from './locationView/LocationsEditor';
 
 function StoryFeaturesTab() {
   const storySummary = useGlossaryStore((state) => state.story_summary);
-  const keyEvents = useGlossaryStore((state) => state.key_events_and_arcs);
+  const arcs = useGlossaryStore((state) => state.arcs);
   const styleGuide = useGlossaryStore((state) => state.style_guide);
-  const worldBuildingNotes = useGlossaryStore((state) => state.world_building_notes);
   const honorifics = useGlossaryStore((state) => state.honorifics);
   const recurringPhrases = useGlossaryStore((state) => state.recurring_phrases);
   
   const updateStorySummary = useGlossaryStore((state) => state.updateStorySummary);
   const updateStyleGuide = useGlossaryStore((state) => state.updateStyleGuide);
-  const addKeyEvent = useGlossaryStore((state) => state.addKeyEvent);
-  const updateKeyEvent = useGlossaryStore((state) => state.updateKeyEvent);
-  const deleteKeyEvent = useGlossaryStore((state) => state.deleteKeyEvent);
-  const addWorldBuildingNote = useGlossaryStore((state) => state.addWorldBuildingNote);
-  const updateWorldBuildingNote = useGlossaryStore((state) => state.updateWorldBuildingNote);
-  const deleteWorldBuildingNote = useGlossaryStore((state) => state.deleteWorldBuildingNote);
+  const addArc = useGlossaryStore((state) => state.addArc);
+  const updateArc = useGlossaryStore((state) => state.updateArc);
+  const deleteArc = useGlossaryStore((state) => state.deleteArc);
   const addHonorific = useGlossaryStore((state) => state.addHonorific);
   const updateHonorific = useGlossaryStore((state) => state.updateHonorific);
   const deleteHonorific = useGlossaryStore((state) => state.deleteHonorific);
@@ -47,13 +43,12 @@ function StoryFeaturesTab() {
   React.useEffect(() => {
     console.log('Story Features Data:', {
       storySummary,
-      keyEventsCount: keyEvents?.length || 0,
-      worldBuildingNotesCount: worldBuildingNotes?.length || 0,
+      arcsCount: arcs?.length || 0,
       honorificsCount: Object.keys(honorifics || {}).length,
       recurringPhrasesCount: Object.keys(recurringPhrases || {}).length,
       styleGuide
     });
-  }, [storySummary, keyEvents, worldBuildingNotes, honorifics, recurringPhrases, styleGuide]);
+  }, [storySummary, arcs, honorifics, recurringPhrases, styleGuide]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -84,103 +79,55 @@ function StoryFeaturesTab() {
 
       <Card>
         <CardHeader>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-            <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Key Story Arcs (주요 스토리 아크)</h3>
-            <Button
-              size="sm"
-              variant="flat"
-              startContent={<FaPlus />}
-              onPress={() => addKeyEvent('New key event')}
-            >
-              Add Event
-            </Button>
-          </div>
+          <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>Story Arcs Overview (스토리 아크 개요)</h3>
         </CardHeader>
         <Divider />
         <CardBody>
-          {keyEvents.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {keyEvents.map((event, index) => (
-                <div key={index} style={{ display: 'flex', gap: '10px', alignItems: 'start' }}>
-                  <div style={{ 
-                    minWidth: '24px', 
-                    height: '24px', 
-                    borderRadius: '50%', 
-                    background: '#667eea', 
-                    color: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    marginTop: '8px'
-                  }}>
-                    {index + 1}
-                  </div>
-                  <Textarea
-                    value={event}
-                    onChange={(e) => updateKeyEvent(index, e.target.value)}
-                    minRows={2}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    size="sm"
-                    isIconOnly
-                    variant="flat"
-                    color="danger"
-                    onPress={() => deleteKeyEvent(index)}
-                  >
-                    <FiTrash />
-                  </Button>
-                </div>
+          {arcs.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {arcs.map((arc, index) => (
+                <Card key={arc.id} shadow="sm">
+                  <CardBody>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: 1 }}>
+                        <div style={{ 
+                          minWidth: '32px', 
+                          height: '32px', 
+                          borderRadius: '50%', 
+                          background: '#667eea', 
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '14px',
+                          fontWeight: 'bold'
+                        }}>
+                          {index + 1}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <h4 style={{ margin: 0, fontWeight: 'bold', fontSize: '14px' }}>{arc.name}</h4>
+                          {arc.theme && <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#888' }}>Theme: {arc.theme}</p>}
+                        </div>
+                      </div>
+                      <Chip size="sm" variant="flat">{arc.characters?.length || 0} characters</Chip>
+                    </div>
+                    <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#666' }}>{arc.description}</p>
+                    {arc.key_events && arc.key_events.length > 0 && (
+                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee' }}>
+                        <p style={{ fontSize: '12px', fontWeight: 'bold', margin: '0 0 4px 0' }}>Key Events:</p>
+                        <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '12px' }}>
+                          {arc.key_events.map((event, i) => (
+                            <li key={i} style={{ marginBottom: '2px' }}>{event}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
               ))}
             </div>
           ) : (
-            <p style={{ color: '#888', fontStyle: 'italic' }}>No key events extracted yet. Click "Add Event" to add one manually, or extract from text.</p>
-          )}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-            <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>World Building Notes (세계관 노트)</h3>
-            <Button
-              size="sm"
-              variant="flat"
-              startContent={<FaPlus />}
-              onPress={() => addWorldBuildingNote('New world building note')}
-            >
-              Add Note
-            </Button>
-          </div>
-        </CardHeader>
-        <Divider />
-        <CardBody>
-          {worldBuildingNotes.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {worldBuildingNotes.map((note, index) => (
-                <div key={index} style={{ display: 'flex', gap: '10px', alignItems: 'start' }}>
-                  <Textarea
-                    value={note}
-                    onChange={(e) => updateWorldBuildingNote(index, e.target.value)}
-                    minRows={2}
-                    style={{ flex: 1 }}
-                  />
-                  <Button
-                    size="sm"
-                    isIconOnly
-                    variant="flat"
-                    color="danger"
-                    onPress={() => deleteWorldBuildingNote(index)}
-                  >
-                    <FiTrash />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p style={{ color: '#888', fontStyle: 'italic' }}>No world building notes extracted yet. Click "Add Note" to add one manually, or extract from text.</p>
+            <p style={{ color: '#888', fontStyle: 'italic' }}>No story arcs extracted yet. Process text to extract arcs automatically.</p>
           )}
         </CardBody>
       </Card>
