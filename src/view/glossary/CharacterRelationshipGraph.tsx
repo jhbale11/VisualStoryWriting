@@ -17,6 +17,7 @@ interface Props {
   characters: GlossaryCharacter[];
   onCharacterSelect: (character: GlossaryCharacter) => void;
   selectedCharacterId?: string;
+  arcFilter?: string | null;  // External arc filter
 }
 
 interface RelationshipEdge extends Edge {
@@ -70,11 +71,12 @@ export default function CharacterRelationshipGraph({
   characters,
   onCharacterSelect,
   selectedCharacterId,
+  arcFilter,
 }: Props) {
   const [nodes, setNodes] = useState<CharacterNode[]>([]);
   const [edges, setEdges] = useState<RelationshipEdge[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<RelationshipEdge | null>(null);
-  const [selectedArcId, setSelectedArcId] = useState<string | null>(null);
+  const [internalArcId, setInternalArcId] = useState<string | null>(null);
   const [positions, setPositions] = useState<Record<string, { x: number, y: number }>>(() => {
     try {
       const raw = localStorage.getItem('vsw.relations.positions') || '{}';
@@ -83,6 +85,9 @@ export default function CharacterRelationshipGraph({
   });
 
   const arcs = useGlossaryStore((state) => state.arcs);
+  
+  // Use external arcFilter if provided, otherwise use internal state
+  const selectedArcId = arcFilter !== undefined ? arcFilter : internalArcId;
 
   // Filter characters by selected arc
   const filteredCharacters = selectedArcId
@@ -183,72 +188,99 @@ export default function CharacterRelationshipGraph({
     // Filter relationships by selected arc
     const selectedArc = selectedArcId ? arcs.find(a => a.id === selectedArcId) : null;
 
-    filteredCharacters.forEach((char) => {
-      if (!char.relationships || char.relationships.length === 0) return;
+    // Helper function to add edge
+    const addEdge = (sourceChar: GlossaryCharacter, targetChar: GlossaryCharacter, relType: string, description: string, sentiment: 'positive' | 'negative' | 'neutral') => {
+      const pairKey1 = `${sourceChar.id}-${targetChar.id}`;
+      const pairKey2 = `${targetChar.id}-${sourceChar.id}`;
 
-      char.relationships
-        .filter(rel => {
-          // If an arc is selected, only show relationships for that arc
-          if (!selectedArc) return true;
-          return !rel.arc_id || rel.arc_id === selectedArc.name || rel.arc_id === selectedArc.id;
-        })
-        .forEach((rel) => {
+      if (!processedPairs.has(pairKey1) && !processedPairs.has(pairKey2)) {
+        processedPairs.add(pairKey1);
+
+        const color = getSentimentColor(sentiment);
+
+        relationshipEdges.push({
+          id: `${sourceChar.id}-${targetChar.id}`,
+          source: sourceChar.id,
+          target: targetChar.id,
+          label: relType,
+          animated: false,
+          style: {
+            stroke: color,
+            strokeWidth: sentiment === 'neutral' ? 2.5 : 3.5,
+          },
+          labelStyle: {
+            fill: color,
+            fontWeight: 700,
+            fontSize: 13,
+          },
+          labelBgStyle: {
+            fill: 'white',
+            fillOpacity: 0.95,
+          },
+          labelBgPadding: [10, 8],
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 24,
+            height: 24,
+            color: color,
+          },
+          data: {
+            relationship: relType,
+            description: description,
+            sentiment,
+            sourceCharacter: sourceChar.name,
+            targetCharacter: targetChar.name,
+          },
+        });
+      }
+    };
+
+    // If arc is selected, use arc's relationships (preferred source of truth)
+    if (selectedArc && selectedArc.relationships && selectedArc.relationships.length > 0) {
+      selectedArc.relationships.forEach((arcRel) => {
+        const sourceChar = filteredCharacters.find(
+          c => c.name.toLowerCase().trim() === arcRel.character_a.toLowerCase().trim() ||
+               c.korean_name?.toLowerCase().trim() === arcRel.character_a.toLowerCase().trim()
+        );
         const targetChar = filteredCharacters.find(
-          (c) => c.name.toLowerCase().trim() === rel.character_name.toLowerCase().trim() ||
-                 c.korean_name?.toLowerCase().trim() === rel.character_name.toLowerCase().trim() ||
-                 c.english_name?.toLowerCase().trim() === rel.character_name.toLowerCase().trim()
+          c => c.name.toLowerCase().trim() === arcRel.character_b.toLowerCase().trim() ||
+               c.korean_name?.toLowerCase().trim() === arcRel.character_b.toLowerCase().trim()
         );
 
-        if (targetChar) {
-          const pairKey1 = `${char.id}-${targetChar.id}`;
-          const pairKey2 = `${targetChar.id}-${char.id}`;
-
-          if (!processedPairs.has(pairKey1) && !processedPairs.has(pairKey2)) {
-            processedPairs.add(pairKey1);
-
-            const sentiment = rel.sentiment || getRelationshipSentiment(rel.relationship_type);
-            const color = getSentimentColor(sentiment);
-
-            relationshipEdges.push({
-              id: `${char.id}-${targetChar.id}`,
-              source: char.id,
-              target: targetChar.id,
-              label: rel.relationship_type,
-              animated: false,
-              style: {
-                stroke: color,
-                strokeWidth: sentiment === 'neutral' ? 2.5 : 3.5,
-              },
-              labelStyle: {
-                fill: color,
-                fontWeight: 700,
-                fontSize: 13,
-              },
-              labelBgStyle: {
-                fill: 'white',
-                fillOpacity: 0.95,
-              },
-              labelBgPadding: [10, 8],
-              markerEnd: {
-                type: MarkerType.ArrowClosed,
-                width: 24,
-                height: 24,
-                color: color,
-              },
-              data: {
-                relationship: rel.relationship_type,
-                description: rel.description,
-                sentiment,
-                sourceCharacter: char.name,
-                targetCharacter: targetChar.name,
-              },
-            });
-          }
+        if (sourceChar && targetChar) {
+          const sentiment = arcRel.sentiment || getRelationshipSentiment(arcRel.relationship_type);
+          addEdge(sourceChar, targetChar, arcRel.relationship_type, arcRel.description, sentiment);
         } else {
-          console.warn(`Relationship target not found: "${rel.character_name}" for character "${char.name}"`);
+          if (!sourceChar) console.warn(`Arc relationship character not found: "${arcRel.character_a}"`);
+          if (!targetChar) console.warn(`Arc relationship character not found: "${arcRel.character_b}"`);
         }
       });
-    });
+    } else {
+      // Fallback to character relationships (for when no arc is selected or arc has no relationships)
+      filteredCharacters.forEach((char) => {
+        if (!char.relationships || char.relationships.length === 0) return;
+
+        char.relationships
+          .filter(rel => {
+            // If an arc is selected, only show relationships for that arc
+            if (!selectedArc) return true;
+            return !rel.arc_id || rel.arc_id === selectedArc.name || rel.arc_id === selectedArc.id;
+          })
+          .forEach((rel) => {
+            const targetChar = filteredCharacters.find(
+              (c) => c.name.toLowerCase().trim() === rel.character_name.toLowerCase().trim() ||
+                     c.korean_name?.toLowerCase().trim() === rel.character_name.toLowerCase().trim()
+            );
+
+            if (targetChar) {
+              const sentiment = rel.sentiment || getRelationshipSentiment(rel.relationship_type);
+              addEdge(char, targetChar, rel.relationship_type, rel.description, sentiment);
+            } else {
+              console.warn(`Relationship target not found: "${rel.character_name}" for character "${char.name}"`);
+            }
+          });
+      });
+    }
 
     console.log(`Characters: ${filteredCharacters.length}, Edges: ${relationshipEdges.length}`);
 
@@ -275,8 +307,8 @@ export default function CharacterRelationshipGraph({
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* Arc filter chips */}
-      {arcs.length > 0 && (
+      {/* Arc filter chips (only show when not externally filtered) */}
+      {arcs.length > 0 && arcFilter === undefined && (
         <div style={{
           position: 'absolute',
           top: '10px',
@@ -291,7 +323,7 @@ export default function CharacterRelationshipGraph({
           <Chip
             color={!selectedArcId ? 'secondary' : 'default'}
             variant={!selectedArcId ? 'solid' : 'bordered'}
-            onClick={() => setSelectedArcId(null)}
+            onClick={() => setInternalArcId(null)}
             style={{ cursor: 'pointer' }}
           >
             All Characters
@@ -301,7 +333,7 @@ export default function CharacterRelationshipGraph({
               key={arc.id}
               color={selectedArcId === arc.id ? 'secondary' : 'default'}
               variant={selectedArcId === arc.id ? 'solid' : 'bordered'}
-              onClick={() => setSelectedArcId(arc.id)}
+              onClick={() => setInternalArcId(arc.id)}
               style={{ cursor: 'pointer' }}
             >
               {arc.name}

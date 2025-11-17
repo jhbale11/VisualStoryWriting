@@ -1076,7 +1076,7 @@ export default function GlossaryBuilder() {
               </div>
             )}
             {selectedTab === 'arc-relationships' && (
-              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', overflowY: 'auto' }}>
+              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', position: 'relative' }}>
                 {glossaryArcs.length === 0 ? (
                   <div style={{
                     display: 'flex',
@@ -1096,50 +1096,58 @@ export default function GlossaryBuilder() {
                     </div>
                   </div>
                 ) : (
-                  <div style={{ padding: '20px' }}>
+                  <>
                     {/* Arc Selector */}
-                    <div style={{ marginBottom: '20px', background: 'white', padding: '15px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px' }}>
-                        Select Arc to View Relationships:
+                    <div style={{
+                      position: 'absolute',
+                      top: '10px',
+                      left: '10px',
+                      zIndex: 15,
+                      background: 'white',
+                      padding: '12px',
+                      borderRadius: '10px',
+                      boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+                      maxWidth: '300px'
+                    }}>
+                      <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>
+                        Filter by Arc:
                       </div>
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <Button
+                          size="sm"
+                          color={!selectedArcFilter ? 'secondary' : 'default'}
+                          variant={!selectedArcFilter ? 'solid' : 'bordered'}
+                          onClick={() => setSelectedArcFilter(null)}
+                          style={{ justifyContent: 'flex-start', fontSize: '12px' }}
+                        >
+                          All Arcs
+                        </Button>
                         {glossaryArcs.map((arc) => (
-                          <Chip
+                          <Button
                             key={arc.id}
-                            onClick={() => setSelectedArcFilter(arc.id)}
+                            size="sm"
                             color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
                             variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
-                            size="lg"
-                            style={{ cursor: 'pointer', fontSize: '13px' }}
+                            onClick={() => setSelectedArcFilter(arc.id)}
+                            style={{ justifyContent: 'flex-start', fontSize: '12px' }}
                           >
                             {arc.name}
-                            {arc.theme && ` (${arc.theme})`}
-                          </Chip>
+                          </Button>
                         ))}
                       </div>
                     </div>
 
-                    {/* Arc Relationships View */}
-                    {selectedArcFilter && (
-                      <ArcRelationshipView
-                        arc={glossaryArcs.find(a => a.id === selectedArcFilter)!}
-                        characters={glossaryCharacters}
-                      />
-                    )}
-                    
-                    {!selectedArcFilter && (
-                      <div style={{
-                        background: 'white',
-                        padding: '40px',
-                        borderRadius: '12px',
-                        textAlign: 'center',
-                        color: '#999'
-                      }}>
-                        <div style={{ fontSize: '48px', marginBottom: '12px' }}>👆</div>
-                        <div>Select an arc above to view its relationships</div>
-                      </div>
-                    )}
-                  </div>
+                    {/* Character Relationship Graph with Arc Filter */}
+                    <CharacterRelationshipGraph
+                      characters={glossaryCharacters}
+                      selectedCharacterId={selectedCharacterId}
+                      arcFilter={selectedArcFilter}
+                      onCharacterSelect={(char) => {
+                        setEditingItem({ type: 'character', item: char });
+                        setSelectedCharacterId(char.id);
+                      }}
+                    />
+                  </>
                 )}
               </div>
             )}
