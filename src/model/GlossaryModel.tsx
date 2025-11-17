@@ -154,6 +154,21 @@ interface GlossaryAction {
   convertToModelFormat: () => { entityNodes: EntityNode[], actionEdges: ActionEdge[], locationNodes: LocationNode[] };
   importFromJSON: (json: string) => void;
   exportToJSON: () => string;
+  
+  // Deprecated functions (kept as stubs for backward compatibility)
+  addCharacter: () => void;
+  addEvent: () => void;
+  addLocation: () => void;
+  addTerm: () => void;
+  updateCharacter: () => void;
+  updateEvent: () => void;
+  updateLocation: () => void;
+  updateTerm: () => void;
+  deleteCharacter: () => void;
+  deleteEvent: () => void;
+  deleteLocation: () => void;
+  deleteTerm: () => void;
+  mergeCharacters: () => void;
 }
 
 const initialState: GlossaryState = {
@@ -827,74 +842,10 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }
   },
 
-  addCharacter: (character) => {
-    set((state) => ({
-      characters: [...state.characters, character],
-    }));
-  },
-
-  addEvent: (event) => {
-    set((state) => ({
-      events: [...state.events, event],
-    }));
-  },
-
-  addLocation: (location) => {
-    set((state) => ({
-      locations: [...state.locations, location],
-    }));
-  },
-
-  addTerm: (term) => {
-    set((state) => ({
-      terms: [...state.terms, term],
-    }));
-  },
-
   addArc: (arc) => {
     set((state) => ({
       arcs: [...state.arcs, arc],
     }));
-  },
-
-  updateCharacter: (id, updates) => {
-    set((state) => {
-      const updatedCharacters = state.characters.map((char) =>
-        char.id === id ? { ...char, ...updates, id: char.id } : char
-      );
-      console.log('Updated character:', id, updates);
-      return { characters: updatedCharacters };
-    });
-  },
-
-  updateEvent: (id, updates) => {
-    set((state) => {
-      const updatedEvents = state.events.map((event) =>
-        event.id === id ? { ...event, ...updates, id: event.id } : event
-      );
-      console.log('Updated event:', id, updates);
-      return { events: updatedEvents };
-    });
-  },
-
-  updateLocation: (id, updates) => {
-    set((state) => {
-      const updatedLocations = state.locations.map((loc) =>
-        loc.id === id ? { ...loc, ...updates, id: loc.id } : loc
-      );
-      console.log('Updated location:', id, updates);
-      return { locations: updatedLocations };
-    });
-  },
-
-  updateTerm: (id, updates) => {
-    set((state) => {
-      const updatedTerms = state.terms.map((term) =>
-        term.id === id ? { ...term, ...updates, id: term.id } : term
-      );
-      console.log('Updated term:', id, updates);
-      return { terms: updatedTerms };
-    });
   },
 
   updateArc: (id, updates) => {
@@ -904,38 +855,6 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       );
       console.log('Updated arc:', id, updates);
       return { arcs: updatedArcs };
-    });
-  },
-
-  deleteCharacter: (id) => {
-    set((state) => {
-      const filtered = state.characters.filter((char) => char.id !== id);
-      console.log('Deleted character:', id);
-      return { characters: filtered };
-    });
-  },
-
-  deleteEvent: (id) => {
-    set((state) => {
-      const filtered = state.events.filter((event) => event.id !== id);
-      console.log('Deleted event:', id);
-      return { events: filtered };
-    });
-  },
-
-  deleteLocation: (id) => {
-    set((state) => {
-      const filtered = state.locations.filter((loc) => loc.id !== id);
-      console.log('Deleted location:', id);
-      return { locations: filtered };
-    });
-  },
-
-  deleteTerm: (id) => {
-    set((state) => {
-      const filtered = state.terms.filter((term) => term.id !== id);
-      console.log('Deleted term:', id);
-      return { terms: filtered };
     });
   },
 
@@ -958,7 +877,6 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       style_guide: { ...state.style_guide, ...guide }
     }));
   },
-
 
   addHonorific: (korean, explanation) => {
     set((state) => ({
@@ -1010,34 +928,26 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     });
   },
 
-  mergeCharacters: (existingId, newCharacter) => {
-    set((state) => ({
-      characters: state.characters.map((char) => {
-        if (char.id === existingId) {
-          const existingRelNames = new Set(char.relationships.map(r => r.character_name.toLowerCase()));
-          const newRels = (newCharacter.relationships || []).filter(
-            r => !existingRelNames.has(r.character_name.toLowerCase())
-          );
+  // ============================================
+  // Obsolete CRUD functions (data now in arcs)
+  // ============================================
+  // These functions are deprecated as characters, events, locations, and terms
+  // are now managed within arcs. Keeping as no-op stubs for backward compatibility.
 
-          return {
-            ...char,
-            description: newCharacter.description || char.description,
-            personality: newCharacter.personality || char.personality,
-            traits: [...new Set([...char.traits, ...(newCharacter.traits || [])])],
-            role: newCharacter.role || char.role,
-            speech_style: newCharacter.speech_style || char.speech_style,
-            emoji: newCharacter.emoji || char.emoji,
-            korean_name: newCharacter.korean_name || char.korean_name,
-            relationships: [
-              ...char.relationships,
-              ...newRels,
-            ],
-          };
-        }
-        return char;
-      }),
-    }));
-  },
+  addCharacter: () => console.warn("addCharacter is deprecated - manage characters within arcs"),
+  addEvent: () => console.warn("addEvent is deprecated - manage events within arcs"),
+  addLocation: () => console.warn("addLocation is deprecated - manage locations within arcs"),
+  addTerm: () => console.warn("addTerm is deprecated - manage terms within arcs"),
+  updateCharacter: () => console.warn("updateCharacter is deprecated - manage characters within arcs"),
+  updateEvent: () => console.warn("updateEvent is deprecated - manage events within arcs"),
+  updateLocation: () => console.warn("updateLocation is deprecated - manage locations within arcs"),
+  updateTerm: () => console.warn("updateTerm is deprecated - manage terms within arcs"),
+  deleteCharacter: () => console.warn("deleteCharacter is deprecated - manage characters within arcs"),
+  deleteEvent: () => console.warn("deleteEvent is deprecated - manage events within arcs"),
+  deleteLocation: () => console.warn("deleteLocation is deprecated - manage locations within arcs"),
+  deleteTerm: () => console.warn("deleteTerm is deprecated - manage terms within arcs"),
+  mergeCharacters: () => console.warn("mergeCharacters is deprecated - manage characters within arcs"),
+
 
   convertToModelFormat: () => {
     const state = get();
