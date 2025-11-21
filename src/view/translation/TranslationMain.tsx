@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import { ProjectList } from './ProjectList';
 import { GlossaryProjectList } from './GlossaryProjectList';
 import { CreateProjectModal } from './CreateProjectModal';
 import { ProjectDetail } from './ProjectDetail';
 import { Button, Tabs, Tab, Card, CardBody, Spinner } from '@nextui-org/react';
+import { FiUpload } from 'react-icons/fi';
 
 export const TranslationMain: React.FC = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -12,19 +13,49 @@ export const TranslationMain: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [glossaryListKey, setGlossaryListKey] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get store data with error handling
   let projects: any[] = [];
+  let archivedProjects: any[] = [];
   let selectedProjectId: string | undefined;
+  let importProject: ((jsonContent: string) => Promise<void>) | undefined;
   
   try {
     const store = useTranslationStore();
     projects = store.projects || [];
+    archivedProjects = store.archivedProjects || [];
     selectedProjectId = store.selectedProjectId;
+    importProject = store.importProject;
   } catch (err) {
     console.error('Store error:', err);
     setError(err instanceof Error ? err.message : 'Failed to load projects');
   }
+  
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      
+      // Import via store (which will handle IndexedDB storage)
+      if (importProject) {
+        await importProject(text);
+        alert(`Successfully imported project: ${file.name}`);
+        
+        // Force re-render
+        setGlossaryListKey(prev => prev + 1);
+      }
+    } catch (error) {
+      alert(`Failed to import project: ${error}`);
+    }
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   useEffect(() => {
     // Simulate loading to ensure store is initialized
@@ -59,7 +90,9 @@ export const TranslationMain: React.FC = () => {
     );
   }
   
-  const selectedProject = projects.find(p => p.id === selectedProjectId);
+  // Find selected project in both active and archived projects
+  const selectedProject = projects.find(p => p.id === selectedProjectId) || 
+                         archivedProjects.find(p => p.id === selectedProjectId);
 
   // Split projects by type
   // Translation projects from translation store (have type === 'translation')
@@ -90,13 +123,31 @@ export const TranslationMain: React.FC = () => {
             </p>
           </div>
           
-          <Button
-            color="primary"
-            size="lg"
-            onPress={() => setIsCreateModalOpen(true)}
-          >
-            + New Project
-          </Button>
+          <div className="flex gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleImport}
+              style={{ display: 'none' }}
+            />
+            <Button
+              color="secondary"
+              size="lg"
+              variant="flat"
+              startContent={<FiUpload />}
+              onPress={() => fileInputRef.current?.click()}
+            >
+              Import
+            </Button>
+            <Button
+              color="primary"
+              size="lg"
+              onPress={() => setIsCreateModalOpen(true)}
+            >
+              + New Project
+            </Button>
+          </div>
         </div>
 
         {/* Statistics Cards */}

@@ -336,10 +336,10 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`
           setReviewText('Running review...')
           reviewModal.onOpen()
           useModelStore.getState().executePrompt({ prompt, response_format: { zodObject: schema, name: 'review' } }).then((res) => {
-            const parsed = res.parsed as { issues: ReviewIssue[] } | undefined
+              const parsed = res.parsed as { issues: ReviewIssue[] } | undefined
             console.log('Review result:', parsed)
             console.log('Number of issues:', parsed?.issues?.length || 0)
-            if (parsed && parsed.issues && parsed.issues.length > 0) {
+              if (parsed && parsed.issues && parsed.issues.length > 0) {
               setReviewText(JSON.stringify(parsed, null, 2))
               setParsedIssues(parsed.issues)
               if (parsed.issues.length < 10) {
@@ -397,14 +397,14 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`
           
           return (
             <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
-              {parsedIssues.map((iss, idx) => {
+          {parsedIssues.map((iss, idx) => {
                 const cardTop = adjustedPositions[idx]
                 if (cardTop === 0) return null
                 
-                const color = CATEGORY_COLOR[iss.category] || 'rgba(255,196,0,0.45)'
+            const color = CATEGORY_COLOR[iss.category] || 'rgba(255,196,0,0.45)'
                 const solidColor = color.replace('0.35', '1')
                 
-                return (
+            return (
                   <div 
                     key={idx}
                     style={{ 
@@ -433,7 +433,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`
                           color: iss.severity === 'high' ? '#dc2626' : iss.severity === 'medium' ? '#f59e0b' : '#10b981',
                           textTransform: 'uppercase'
                         }}>{iss.severity}</span>
-                      </div>
+                  </div>
                       <div style={{ marginBottom: 8, lineHeight: 1.4 }}>{iss.message}</div>
                       {iss.suggestion && (
                         <div style={{ marginTop: 8, padding: 8, background: '#f9fafb', borderRadius: 4, fontSize: 11, lineHeight: 1.4 }}>
@@ -446,11 +446,11 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`
                           "{iss.text.length > 60 ? iss.text.substring(0, 60) + '...' : iss.text}"
                         </div>
                       )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
           )
         })()}
       </div>

@@ -108,6 +108,7 @@ export interface GlossaryArc {
     relationship_type: string;
     description: string;
     sentiment?: 'positive' | 'negative' | 'neutral';
+    addressing?: string; // How character_a addresses character_b (e.g., "형", "선배님")
   }>; // Relationships specific to this arc
   key_events: string[]; // Key event summaries
   background_changes?: string[]; // Changes in setting/background in this arc
@@ -115,6 +116,7 @@ export interface GlossaryArc {
     original: string;
     translation: string;
     context: string;
+    category?: string;
   }>; // Terms specific to this arc
   start_chunk?: number; // Starting chunk index
   end_chunk?: number; // Ending chunk index
@@ -278,101 +280,135 @@ async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
   const targetLanguage = useGlossaryStore.getState().target_language;
   const languageDirective = getLanguageDirective(targetLanguage);
   
-  const prompt = `당신은 한국 웹소설 번역 전문가입니다. 이 chunk를 읽고 **Arc 중심의 번역용 glossary**를 작성하세요.
+  const prompt = `You are a Korean web novel translation expert. Extract COMPLETE and DETAILED information for translation from this chunk.
 ${languageDirective}
 
-⚠️ **CRITICAL**: 모든 인물/사건/장소/용어 정보는 **arcs 배열 내부**에만 저장하세요! ⚠️
+**🎯 EXTRACTION PRIORITY: MAXIMUM DETAIL NOW, CONSOLIDATION LATER**
 
-**핵심 원칙:**
-1. **arcs 필드는 필수** - 최소 1개 arc 반드시 포함
-2. **모든 데이터는 arc 내부** - characters, events, locations, terms는 arc.characters, arc.events, arc.locations, arc.terms에만 저장
-3. **간결함** - 각 항목 1-2문장, 핵심만
-4. **분량 제한** - 인물 3-5명, 사건 3-5개, 용어 5개 이하
+1. **CHARACTERS - Extract EVERY character mentioned with COMPLETE information**
+   
+   ✅ ALWAYS extract these fields for EVERY character:
+   - name (English transliteration - clear and consistent)
+   - korean_name (original Korean name)
+   - age (teenager/20s/30s/40s/adult/elderly/child)
+   - speech_style (DETAILED: formal/informal/rough/polite + specific examples from text)
+   - physical_appearance (ALL distinctive features mentioned: hair, eyes, build, clothing)
+   - personality (2-3 sentences capturing character essence)
+   - traits (ALL mentioned traits: ["trait1", "trait2", "trait3", ...])
+   - role (protagonist/antagonist/major/supporting/minor - based on screen time in THIS chunk)
+   - emoji (choose appropriate emoji for character)
+   
+   ✅ Extract if mentioned:
+   - name_variants (ALL nicknames, titles, how others address them: {"nickname": "별명", "title": "직함"})
+   - gender (male/female/other - if mentioned)
+   - occupation (job/role in society)
+   - abilities (special skills, powers, talents)
+   - description (general description if available)
+   
+   💡 IMPORTANT: 
+   - Extract EVEN if character seems minor
+   - Duplicate is OK - we'll consolidate later
+   - Better to have TOO MUCH info than too little
+   - If a character appears, extract EVERYTHING about them
 
-**반드시 유효한 JSON만 반환하세요. 코드 블록 없이 순수 JSON만 출력하세요.**
+2. **RELATIONSHIPS - Extract EVERY interaction with COMPLETE details**
+   ✅ For EVERY character interaction, include:
+   - character_a (exact name as used above)
+   - character_b (exact name as used above)
+   - addressing (EXACT term A uses to address B: "형", "님", "씨", first name, title, etc.)
+   - relationship_type (friend/rival/mentor/family/romantic/enemy/colleague/stranger)
+   - description (2-3 sentences about their dynamic and how they interact)
+   - sentiment (positive/negative/neutral/complex/ambiguous)
+   
+   💡 Extract even minor interactions - we'll filter later
 
-JSON 형식:
+3. **KEY EVENTS - Extract ALL significant plot points**
+   ✅ Include 5-10 events that happen in this chunk
+   ✅ Events that reveal character, advance plot, or affect relationships
+   ❌ Only skip truly trivial actions
+
+4. **LOCATIONS - Extract EVERY location mentioned**
+   ✅ Cities, buildings, rooms, outdoor areas, any named place
+   ✅ Include korean_name if mentioned, type (city/building/room/natural)
+
+5. **TERMS - Extract ALL potentially translation-relevant vocabulary**
+   ✅ Cultural terms, magic systems, titles, proper nouns, idioms
+   ✅ Include category: cultural/magic/title/item/concept/idiom/slang
+   ✅ Include context about usage
+
+6. **HONORIFICS & PHRASES**
+   ✅ ALL honorifics/phrases appearing in this chunk
+   ✅ With clear translation/explanation
+   ✅ Include usage context
+
+**📋 JSON STRUCTURE:**
 {
-  "arcs": [
-    {
-      "id": "arc-${chunkIndex}-0",
-      "name": "Arc Name (${targetLanguage})",
-      "description": "What happens (2-3 sentences)",
-      "theme": "Theme keyword",
-      "start_chunk": ${chunkIndex},
-      "characters": [
-        {
-          "id": "char-${chunkIndex}-0",
-          "name": "Full Name",
-          "korean_name": "한글이름",
-          "description": "Background and role (1-2 sentences)",
-          "physical_appearance": "Key features (optional)",
-          "personality": "Key traits (1 sentence)",
-          "traits": ["trait1", "trait2"],
-          "emoji": "😊",
-          "age": "20s/30s/unknown",
-          "gender": "male/female/unknown",
-          "role": "protagonist/major/supporting/antagonist",
-          "age_group": "child/teen/adult/elder",
-          "occupation": "Job (optional)",
-          "abilities": ["ability1"],
-          "speech_style": "How they speak (optional)",
-          "name_variants": {"nickname": "Nick"},
-          "honorifics_used": {"님": "when addressing"},
-          "relationships": [
-            {
-              "character_name": "Target Name",
-              "relationship_type": "friend/enemy/family",
-              "description": "Their relationship",
-              "sentiment": "positive/negative/neutral",
-              "arc_id": "arc-${chunkIndex}-0"
-            }
-          ]
-        }
-      ],
-      "events": [
-        {
-          "id": "event-${chunkIndex}-0",
-          "name": "Event name",
-          "description": "What happened (1-2 sentences)",
-          "characters_involved": ["Char1", "Char2"],
-          "location": "Location name (optional)",
-          "importance": "major/minor"
-        }
-      ],
-      "locations": [
-        {
-          "id": "location-${chunkIndex}-0",
-          "name": "Location Name",
-          "korean_name": "한글장소명 (optional)",
-          "description": "Brief description",
-          "emoji": "🏰",
-          "type": "city/building/natural/room"
-        }
-      ],
-      "key_events": ["Brief event 1", "Brief event 2"],
-      "background_changes": ["Setting change 1"],
-      "terms": [
-        {
-          "id": "term-${chunkIndex}-0",
-          "original": "한글용어",
-          "translation": "English",
-          "context": "Usage",
-          "category": "cultural/concept/title"
-        }
-      ]
-    }
-  ],
-  "honorifics": {"님": "Honorific explanation"},
-  "recurring_phrases": {"한글구절": "Translation"},
+  "arcs": [{
+    "id": "arc-${chunkIndex}",
+    "name": "Arc Name (clear & concise)",
+    "description": "What happens in 2-3 sentences",
+    "theme": "Main theme keyword",
+    "start_chunk": ${chunkIndex},
+    "characters": [{
+      "id": "char-name-${chunkIndex}",
+      "name": "English Name",
+      "korean_name": "한글이름",
+      "age": "teenager/20s/30s",
+      "speech_style": "Specific speech pattern with examples",
+      "physical_appearance": "Only distinctive features",
+      "personality": "Core personality in 1 sentence",
+      "traits": ["trait1", "trait2", "trait3"],
+      "name_variants": {"nickname": "별명", "title": "직함"},
+      "emoji": "😊",
+      "role": "protagonist/major/supporting/minor"
+    }],
+    "relationships": [{
+      "character_a": "Name A",
+      "character_b": "Name B",
+      "relationship_type": "friend/rival/mentor/family",
+      "description": "How they interact (1 sentence)",
+      "sentiment": "positive/negative/neutral",
+      "addressing": "Exact term A uses for B"
+    }],
+    "events": [{
+      "id": "event-${chunkIndex}-0",
+      "name": "Event name",
+      "description": "What happened (1 sentence)",
+      "characters_involved": ["Name1", "Name2"],
+      "importance": "major/minor"
+    }],
+    "locations": [{
+      "id": "loc-${chunkIndex}-0",
+      "name": "Place Name",
+      "korean_name": "한글지명",
+      "description": "Brief description",
+      "type": "city/building/room/natural",
+      "emoji": "🏰"
+    }],
+    "key_events": ["Brief event 1", "Brief event 2"],
+    "terms": [{
+      "original": "한글",
+      "translation": "English",
+      "context": "Usage context",
+      "category": "cultural/magic/title/item"
+    }]
+  }],
+  "honorifics": {"님": "formal suffix"},
+  "recurring_phrases": {"구절": "translation"},
   "style_guide": {
-    "name_format": "english_given_name english_surname",
-    "tone": "standard",
-    "formality_level": "medium"
+    "genre": "genre",
+    "tone": "tone description",
+    "narrative_style": {
+      "point_of_view": "first/third-person",
+      "tense": "past/present"
+    }
   }
 }
 
-분석할 텍스트:
+**Chunk ${chunkIndex}**
+Return ONLY valid JSON. NO code blocks. NO markdown.
+
+Text to analyze:
 ${chunk}`;
 
   try {
@@ -381,7 +417,7 @@ ${chunk}`;
     }
 
     console.log(`🔄 Processing chunk ${chunkIndex}...`);
-    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const content = response.text();
@@ -455,6 +491,7 @@ ${chunk}`;
         relationship_type: rel.relationship_type || 'unknown',
         description: rel.description || '',
         sentiment: rel.sentiment || 'neutral',
+        addressing: rel.addressing || '',
       })),
       key_events: arc.key_events || [],
       background_changes: arc.background_changes || [],
@@ -525,98 +562,252 @@ async function consolidateArcs(arcs: GlossaryArc[]): Promise<GlossaryArc[]> {
   const targetLanguage = useGlossaryStore.getState().target_language;
   const languageDirective = getLanguageDirective(targetLanguage);
   
-  const prompt = `당신은 한국 웹소설 번역 전문가입니다. 여러 chunk에서 추출된 Arc들을 **Arc 중심의 Glossary로 정리 및 병합**하세요.
+  const prompt = `You are a Korean web novel translation expert. Consolidate extracted glossary data into a clean, translator-friendly format.
 ${languageDirective}
 
-**🎯 핵심 원칙: Arc = Glossary의 기본 단위**
-- 📖 각 Arc는 독립적인 glossary 단위
-- 🎭 각 Arc는 자체적으로 characters, relationships, terms를 가짐
-- 🔗 Arc별로 등장인물, 관계, 배경 변화, 용어를 명확히 유지
+**🎯 CRITICAL GOAL: Clean arcs + Complete character info in EACH arc**
 
-**📊 작업 목표:**
+**📋 CONSOLIDATION TASKS:**
 
-1️⃣ **Arc 병합 및 정리 (5-8개 목표)**
-   - 유사하거나 연속된 arc 병합
-   - 너무 짧은 arc는 인접 arc와 통합
-   - 시간순 정렬
-   - 각 arc는 명확한 narrative 단계를 나타냄
+**1. MERGE ARCS (Target: 5-8 major arcs)**
+   - Combine similar/sequential arcs (e.g., "Chapter 1 Arc" + "Chapter 2 Arc" → "Early Arc")
+   - Sort chronologically
+   - Each arc = distinct story phase with clear theme
 
-2️⃣ **각 Arc별 Character 정보 유지**
-   - 이 arc에 등장하는 주요 인물 (5-8명)
-   - role_in_arc: 이 arc에서의 역할 명시
-   - first_appearance: 처음 등장하는 인물 표시
+**2. COMPLETE CHARACTERS IN EACH ARC ⭐ CRITICAL ⭐**
+   
+   **Step A: Build character database**
+   - For EACH unique character across ALL arcs, merge all information:
+     * Combine all traits/name_variants from every appearance
+     * Take longest/most detailed speech_style, physical_appearance, personality
+     * Use first appearance arc
+     * Keep highest importance role
+   
+   **Step B: Populate EACH arc's characters array**
+   - For EACH arc, look at who appears in that arc
+   - For EACH character in that arc, include COMPLETE merged character object:
+   
+   Example character structure:
+   {
+     "id": "char-simon",
+     "name": "Simon Polentia",
+     "korean_name": "시몬 폴렌티아",
+     "age": "teenager",
+     "gender": "male",
+     "speech_style": "Polite and formal with elders, casual with peers. Uses 입니다 endings with teachers.",
+     "physical_appearance": "Young boy with distinctive mixed heritage features, fit build, dark hair",
+     "personality": "Curious, determined, and adaptable. Shows respect to authority but confident among peers.",
+     "traits": ["genius", "mixed heritage", "necromancer", "adaptable", "respectful"],
+     "name_variants": {"title": "Special Admission No.1", "nickname": "Simon"},
+     "emoji": "👦",
+     "role": "protagonist",
+     "first_appearance_arc": "Admission to Kizen",
+     "role_in_arc": "protagonist",
+     "first_appearance": true
+   }
+   
+   💡 KEY POINT: Same character appears in multiple arcs → Include COMPLETE info in EACH arc
+   💡 NO SHORTCUTS: Every arc.characters must have full GlossaryCharacter objects
+   💡 Do NOT just put character names - include ALL fields
 
-3️⃣ **각 Arc별 Relationship 유지 (5-8개)**
-   - 이 arc에서 형성되거나 변화하는 관계만
-   - character_a, character_b, relationship_type, description, sentiment
+**3. ORGANIZE RELATIONSHIPS (Arc-specific)**
+   ✅ Group relationships by arc
+   ✅ Keep relationship evolution visible across arcs
+   ✅ MUST include "addressing" field for EVERY relationship
+   ✅ Remove exact duplicates within same arc
+   ✅ If same relationship exists in multiple arcs, that's OK
 
-4️⃣ **각 Arc별 Key Events (3-5개)**
-   - 이 arc의 핵심 사건
-   - 간결하고 명확하게
+**4. CONSOLIDATE TERMS**
+   - Remove duplicates (same original + translation)
+   - Keep most detailed context
+   - Aim for 20-40 unique terms total
 
-5️⃣ **각 Arc별 Background Changes (있는 경우만)**
-   - 새로운 배경이나 중요한 장소 변화
-
-6️⃣ **각 Arc별 Terms (3-5개)**
-   - 이 arc에서 중요한 번역 주의 용어
-   - 전체 작품에서 50개 이내 목표
+**5. CLEAN UP**
+   ❌ Remove empty strings ""
+   ❌ Remove empty arrays []
+   ❌ Remove null values
+   ✅ Keep only fields with actual data
 
 ---
 
-**추출된 Arc 정보 (${arcs.length}개):**
+**INPUT: ${arcs.length} arcs to consolidate**
 
 ${JSON.stringify(arcs.map(a => ({
+  id: a.id,
   name: a.name,
   description: a.description,
   theme: a.theme,
   chunk_range: `${a.start_chunk}-${a.end_chunk}`,
-  characters: a.characters,
-  relationships: a.relationships,
+  characters: a.characters?.map(c => ({
+    id: c.id,
+    name: c.name,
+    korean_name: c.korean_name,
+    age: c.age,
+    speech_style: c.speech_style,
+    physical_appearance: c.physical_appearance,
+    personality: c.personality,
+    traits: c.traits,
+    name_variants: c.name_variants,
+    role: c.role
+  })),
+  relationships: a.relationships?.map(r => ({
+    character_a: r.character_a,
+    character_b: r.character_b,
+    relationship_type: r.relationship_type,
+    description: r.description,
+    sentiment: r.sentiment,
+    addressing: r.addressing
+  })),
   key_events: a.key_events,
   background_changes: a.background_changes,
-  terms: a.terms
+  terms: a.terms?.map(t => ({
+    original: t.original,
+    translation: t.translation,
+    context: t.context,
+    category: t.category
+  }))
 })), null, 2)}
 
 ---
 
-**병합 시 주의사항:**
-- Arc 병합 시 characters, relationships, terms도 함께 병합
-- 중복 character는 하나로 통합하되 role_in_arc는 유지
-- 중복 relationship는 제거
-- 중복 term은 제거
-- Arc별 정보의 독립성과 명확성 유지
+**OUTPUT STRUCTURE:**
 
-**반드시 유효한 JSON만 반환하세요. 코드 블록 없이 순수 JSON만 출력하세요.**
-
-JSON 형식:
 {
   "arcs": [
     {
-      "name": "Arc name in TARGET LANGUAGE",
-      "description": "Brief arc description in TARGET LANGUAGE (2-3 sentences)",
-      "theme": "Theme in TARGET LANGUAGE",
+      "id": "admission-arc",
+      "name": "Admission to Kizen",
+      "description": "Simon's journey from Earth to Kizen Academy. He meets Nephthys who scouts him...",
+      "theme": "New beginnings and discovery",
+      "start_chunk": 0,
+      "end_chunk": 5,
       "characters": [
-        {"name": "Character Name", "role_in_arc": "their role in this arc", "first_appearance": true}
+        {
+          "id": "char-simon",
+          "name": "Simon Polentia",
+          "korean_name": "시몬 폴렌티아",
+          "age": "teenager",
+          "gender": "male",
+          "speech_style": "Polite and formal with elders using '입니다/습니다' endings, casual and friendly with peers using '해요' style",
+          "physical_appearance": "Young boy with distinctive mixed heritage features, fit athletic build, dark hair and eyes",
+          "personality": "Curious and eager to learn, determined when facing challenges, adaptable to new situations, respectful of authority figures",
+          "traits": ["genius", "mixed heritage", "necromancer", "adaptable", "respectful", "determined"],
+          "name_variants": {"title": "Special Admission No.1", "nickname": "Simon"},
+          "emoji": "👦",
+          "role": "protagonist",
+          "first_appearance_arc": "Admission to Kizen",
+          "role_in_arc": "protagonist",
+          "first_appearance": true
+        },
+        {
+          "id": "char-nephthys",
+          "name": "Nephthys Archbold",
+          "korean_name": "네프티스 아크볼드",
+          "age": "30s",
+          "gender": "female",
+          "speech_style": "Mature and confident, uses formal but warm language",
+          "physical_appearance": "Elegant woman with long silver hair, commanding presence",
+          "personality": "Protective mentor figure, perceptive and strategic",
+          "traits": ["mentor", "powerful", "perceptive", "caring"],
+          "name_variants": {"title": "Professor Archbold"},
+          "emoji": "👩‍🏫",
+          "role": "major",
+          "first_appearance_arc": "Admission to Kizen",
+          "role_in_arc": "mentor",
+          "first_appearance": true
+        }
       ],
       "relationships": [
-        {"character_a": "A", "character_b": "B", "relationship_type": "type", "description": "brief", "sentiment": "positive"}
+        {
+          "character_a": "Simon Polentia",
+          "character_b": "Nephthys Archbold",
+          "relationship_type": "mentor/student",
+          "description": "Nephthys scouts Simon from Earth and guides him. She acts as his mentor and protector.",
+          "sentiment": "positive",
+          "addressing": "Nephthys-nim"
+        }
       ],
-      "key_events": ["Event 1 in TARGET LANGUAGE", "Event 2 in TARGET LANGUAGE"],
-      "background_changes": ["Change 1 in TARGET LANGUAGE"],
+      "key_events": [
+        "Simon is discovered on Earth by Nephthys",
+        "Simon enters Kizen Academy as special admission",
+        "Simon learns about necromancy basics"
+      ],
       "terms": [
-        {"original": "한글", "translation": "Translation", "context": "Context in TARGET LANGUAGE"}
+        {
+          "id": "term-chilheuk",
+          "original": "칠흑",
+          "translation": "Jet-Black",
+          "context": "The dark mana source used by necromancers at Kizen",
+          "category": "magic"
+        }
+      ]
+    },
+    {
+      "id": "rivalry-arc",
+      "name": "First Week & Rivalries",
+      "description": "Simon's first week includes...",
+      "theme": "Competition and growth",
+      "start_chunk": 6,
+      "end_chunk": 10,
+      "characters": [
+        {
+          "id": "char-simon",
+          "name": "Simon Polentia",
+          "korean_name": "시몬 폴렌티아",
+          "age": "teenager",
+          "gender": "male",
+          "speech_style": "Polite and formal with elders using '입니다/습니다' endings, casual and friendly with peers using '해요' style",
+          "physical_appearance": "Young boy with distinctive mixed heritage features, fit athletic build, dark hair and eyes",
+          "personality": "Curious and eager to learn, determined when facing challenges, adaptable to new situations, respectful of authority figures",
+          "traits": ["genius", "mixed heritage", "necromancer", "adaptable", "respectful", "determined"],
+          "name_variants": {"title": "Special Admission No.1", "nickname": "Simon"},
+          "emoji": "👦",
+          "role": "protagonist",
+          "first_appearance_arc": "Admission to Kizen",
+          "role_in_arc": "protagonist",
+          "first_appearance": false
+        },
+        {
+          "id": "char-hector",
+          "name": "Hector Moore",
+          "korean_name": "헥토르 무어",
+          "age": "teenager",
+          "speech_style": "Competitive and challenging, informal with peers",
+          "physical_appearance": "Athletic build, confident posture",
+          "personality": "Competitive rival, prideful but respects strength",
+          "traits": ["competitive", "proud", "talented"],
+          "emoji": "⚔️",
+          "role": "supporting",
+          "first_appearance_arc": "First Week & Rivalries",
+          "role_in_arc": "rival",
+          "first_appearance": true
+        }
       ],
-      "start_chunk": 0,
-      "end_chunk": 5
+      "relationships": [
+        {
+          "character_a": "Simon Polentia",
+          "character_b": "Hector Moore",
+          "relationship_type": "rival",
+          "description": "They compete for top rankings and clash over magical approaches",
+          "sentiment": "negative",
+          "addressing": "야"
+        }
+      ],
+      "key_events": ["Simon's first class at Kizen", "First confrontation with Hector"],
+      "terms": []
     }
   ]
-}`;
+}
+
+**CRITICAL: Each arc MUST have complete character objects with ALL fields filled. Do NOT just list character names or IDs.**
+
+**Return ONLY valid JSON. NO code blocks. NO markdown. Remove ALL empty fields.**`;
 
   try {
     if (!geminiAPI) throw new Error('Gemini API not initialized');
     
     console.log('🔄 Consolidating arcs with LLM...');
-    const model = geminiAPI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+    const model = geminiAPI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
     const result = await model.generateContent(prompt);
     const content = (await result.response).text();
     
@@ -634,35 +825,258 @@ JSON 형식:
     console.log(`✅ Arc consolidation JSON parsed. Keys:`, Object.keys(parsed));
     console.log(`📊 Consolidated arc count: ${(parsed.arcs || []).length}`);
     
-    const consolidatedArcs = (parsed.arcs || []).map((arc: any) => ({
+    // Build comprehensive maps from original arcs to preserve full data
+    const characterMap = new Map<string, GlossaryCharacter>();
+    const characterByKoreanName = new Map<string, GlossaryCharacter>();
+    const eventMap = new Map<string, GlossaryEvent>();
+    const locationMap = new Map<string, GlossaryLocation>();
+    
+    console.log('🗂️ Building character database from original arcs...');
+    arcs.forEach((arc, arcIdx) => {
+      console.log(`   Arc ${arcIdx}: ${arc.name} - ${arc.characters?.length || 0} characters`);
+      (arc.characters || []).forEach(char => {
+        const englishKey = char.name?.toLowerCase().trim() || '';
+        const koreanKey = char.korean_name?.toLowerCase().trim() || '';
+        
+        if (englishKey) {
+          // Merge with existing character if found, otherwise add new
+          const existing = characterMap.get(englishKey);
+          if (existing) {
+            // Merge: take longest/most complete fields
+            characterMap.set(englishKey, {
+              ...existing,
+              speech_style: (char.speech_style?.length || 0) > (existing.speech_style?.length || 0) ? char.speech_style : existing.speech_style,
+              physical_appearance: (char.physical_appearance?.length || 0) > (existing.physical_appearance?.length || 0) ? char.physical_appearance : existing.physical_appearance,
+              personality: (char.personality?.length || 0) > (existing.personality?.length || 0) ? char.personality : existing.personality,
+              traits: [...new Set([...(existing.traits || []), ...(char.traits || [])])],
+              name_variants: { ...(existing.name_variants || {}), ...(char.name_variants || {}) },
+              age: char.age || existing.age,
+              gender: char.gender || existing.gender,
+              occupation: char.occupation || existing.occupation,
+              abilities: [...new Set([...(existing.abilities || []), ...(char.abilities || [])])],
+            });
+          } else {
+            characterMap.set(englishKey, char);
+            console.log(`     ✅ Added: ${char.name} (${char.korean_name || 'no korean'})`);
+          }
+        }
+        
+        if (koreanKey && !characterByKoreanName.has(koreanKey)) {
+          characterByKoreanName.set(koreanKey, char);
+        }
+      });
+      
+      (arc.events || []).forEach(event => {
+        const key = event.name?.toLowerCase() || '';
+        if (key && !eventMap.has(key)) {
+          eventMap.set(key, event);
+        }
+      });
+      
+      (arc.locations || []).forEach(loc => {
+        const key = loc.name?.toLowerCase() || '';
+        if (key && !locationMap.has(key)) {
+          locationMap.set(key, loc);
+        }
+      });
+    });
+    
+    console.log(`📊 Character database: ${characterMap.size} unique characters`);
+    characterMap.forEach((char, key) => {
+      console.log(`   - ${key}: ${char.korean_name || 'no korean'} [${char.role}]`);
+    });
+
+    const consolidatedArcs = (parsed.arcs || []).map((arc: any, arcIdx: number) => {
+      console.log(`🔍 Processing consolidated arc ${arcIdx}: ${arc.name}`);
+      console.log(`   - Relationships in parsed arc: ${(arc.relationships || []).length}`);
+      
+      return {
       id: arc.name || arc.id,
       name: arc.name || 'Unknown Arc',
       description: arc.description || '',
       theme: arc.theme || '',
-      characters: (arc.characters || []).map((char: any) => ({
-        name: char.name || '',
-        role_in_arc: char.role_in_arc || '',
-        first_appearance: char.first_appearance || false,
-      })),
-      relationships: (arc.relationships || []).map((rel: any) => ({
-        character_a: rel.character_a || '',
-        character_b: rel.character_b || '',
-        relationship_type: rel.relationship_type || 'unknown',
-        description: rel.description || '',
-        sentiment: rel.sentiment || 'neutral',
-      })),
+      characters: (arc.characters || []).map((char: any, charIdx: number) => {
+        console.log(`     Character ${charIdx}: ${JSON.stringify(char).substring(0, 100)}...`);
+        
+        // Try multiple ways to find the full character data
+        const charNameLower = (char.name || '').toLowerCase().trim();
+        const charKoreanLower = (char.korean_name || '').toLowerCase().trim();
+        
+        let fullChar = characterMap.get(charNameLower);
+        if (!fullChar && charKoreanLower) {
+          fullChar = characterByKoreanName.get(charKoreanLower);
+        }
+        
+        if (fullChar) {
+          console.log(`       ✅ Found full character: ${fullChar.name}`);
+          // Return full character with arc-specific metadata
+          return {
+            ...fullChar,
+            role_in_arc: char.role_in_arc || char.role || fullChar.role,
+            first_appearance: char.first_appearance === true || (char.first_appearance_arc === arc.name),
+          };
+        }
+        
+        // If LLM returned a complete character object, use it
+        if (char.name && char.korean_name && (char.speech_style || char.personality)) {
+          console.log(`       ℹ️ Using LLM-provided character data: ${char.name}`);
+          return {
+            id: char.id || `char-${char.name.replace(/\s+/g, '-').toLowerCase()}`,
+            name: char.name,
+            korean_name: char.korean_name || '',
+            description: char.description || '',
+            physical_appearance: char.physical_appearance || '',
+            personality: char.personality || '',
+            traits: char.traits || [],
+            emoji: char.emoji || '👤',
+            age: char.age || '',
+            gender: char.gender || '',
+            role: char.role || 'minor',
+            role_in_arc: char.role_in_arc || char.role || 'minor',
+            first_appearance: char.first_appearance === true || (char.first_appearance_arc === arc.name),
+            age_group: char.age_group || 'adult',
+            occupation: char.occupation || '',
+            abilities: char.abilities || [],
+            speech_style: char.speech_style || '',
+            name_variants: char.name_variants || {},
+            honorifics_used: char.honorifics_used || {},
+            relationships: [],
+          };
+        }
+        
+        // Last resort: create minimal character object
+        console.warn(`       ⚠️ Creating minimal character for: ${char.name || 'unknown'}`);
+        return {
+          id: `char-${(char.name || 'unknown').replace(/\s+/g, '-').toLowerCase()}`,
+          name: char.name || 'Unknown Character',
+          korean_name: char.korean_name || '',
+          description: '',
+          physical_appearance: '',
+          personality: '',
+          traits: [],
+          emoji: '👤',
+          age: '',
+          gender: '',
+          role: char.role || 'minor',
+          role_in_arc: char.role_in_arc || char.role || 'minor',
+          first_appearance: char.first_appearance === true,
+          age_group: 'adult',
+          occupation: '',
+          abilities: [],
+          speech_style: '',
+          name_variants: {},
+          honorifics_used: {},
+          relationships: [],
+        };
+      }),
+      relationships: (() => {
+        const parsedRels = (arc.relationships || []).map((rel: any) => ({
+          character_a: rel.character_a || '',
+          character_b: rel.character_b || '',
+          relationship_type: rel.relationship_type || 'unknown',
+          description: rel.description || '',
+          sentiment: rel.sentiment || 'neutral',
+          addressing: rel.addressing || '',
+        }));
+        
+        console.log(`   - Parsed relationships: ${parsedRels.length}`);
+        
+        // If LLM didn't return relationships, try to find from original arcs
+        if (parsedRels.length === 0) {
+          console.log(`   ⚠️ No relationships in parsed arc, checking original arcs...`);
+          const originalArc = arcs.find(a => 
+            a.name.toLowerCase() === arc.name.toLowerCase() ||
+            a.id === arc.id ||
+            a.id === arc.name
+          );
+          
+          if (originalArc && originalArc.relationships && originalArc.relationships.length > 0) {
+            console.log(`   ✅ Found ${originalArc.relationships.length} relationships in original arc`);
+            return originalArc.relationships;
+          }
+        }
+        
+        return parsedRels.filter((r: any) => r.character_a && r.character_b);
+      })(),
+      events: (arc.events || arc.key_events || []).map((evt: any) => {
+        // If evt is just a string (from key_events), create minimal event object
+        if (typeof evt === 'string') {
+          return {
+            id: `event-${evt.replace(/\s+/g, '-').toLowerCase()}`,
+            name: evt,
+            description: evt,
+            characters_involved: [],
+            location: '',
+            importance: 'major' as const,
+          };
+        }
+        
+        // Try to find full event data
+        const eventName = (evt.name || '').toLowerCase();
+        const fullEvent = eventMap.get(eventName);
+        
+        return fullEvent || {
+          id: evt.id || `event-${evt.name?.replace(/\s+/g, '-').toLowerCase() || 'unknown'}`,
+          name: evt.name || '',
+          description: evt.description || '',
+          characters_involved: evt.characters_involved || [],
+          location: evt.location || '',
+          importance: evt.importance || 'minor' as const,
+        };
+      }),
+      locations: (arc.locations || arc.background_changes || []).map((loc: any) => {
+        // If loc is just a string (from background_changes), create minimal location object
+        if (typeof loc === 'string') {
+          return {
+            id: `location-${loc.replace(/\s+/g, '-').toLowerCase()}`,
+            name: loc,
+            korean_name: '',
+            description: loc,
+            emoji: '📍',
+          };
+        }
+        
+        // Try to find full location data
+        const locName = (loc.name || '').toLowerCase();
+        const fullLoc = locationMap.get(locName);
+        
+        return fullLoc || {
+          id: loc.id || `location-${loc.name?.replace(/\s+/g, '-').toLowerCase() || 'unknown'}`,
+          name: loc.name || '',
+          korean_name: loc.korean_name || '',
+          description: loc.description || '',
+          emoji: loc.emoji || '📍',
+        };
+      }),
       key_events: arc.key_events || [],
       background_changes: arc.background_changes || [],
       terms: (arc.terms || []).map((term: any) => ({
+        id: term.id || `term-${term.original?.replace(/\s+/g, '-').toLowerCase() || 'unknown'}`,
         original: term.original || '',
         translation: term.translation || '',
         context: term.context || '',
+        category: term.category || '',
+        notes: term.notes || '',
       })),
       start_chunk: arc.start_chunk,
       end_chunk: arc.end_chunk,
-    }));
+    };
+    });
     
     console.log('✅ Arc consolidation complete');
+    consolidatedArcs.forEach((arc: any, idx: number) => {
+      console.log(`📊 Arc ${idx}: ${arc.name}`);
+      console.log(`   - Characters: ${arc.characters.length}`);
+      console.log(`   - Relationships: ${arc.relationships.length}`);
+      console.log(`   - Events: ${arc.events.length}`);
+      console.log(`   - Terms: ${arc.terms.length}`);
+      if (arc.relationships.length > 0) {
+        arc.relationships.forEach((rel: any, relIdx: number) => {
+          console.log(`     Rel ${relIdx}: ${rel.character_a} → ${rel.character_b} [${rel.addressing || 'no addressing'}]`);
+        });
+      }
+    });
+    
     return consolidatedArcs;
   } catch (error) {
     console.error('❌ Error consolidating arcs:', error);
@@ -836,6 +1250,36 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
         arcs: consolidatedArcs,
         isLoading: false,
       });
+
+      // Immediately save to localStorage after consolidation
+      console.log('💾 Saving consolidated glossary to localStorage...');
+      try {
+        const currentId = localStorage.getItem('vsw.currentProjectId');
+        if (currentId) {
+          const raw = localStorage.getItem('vsw.projects') || '[]';
+          const arr = JSON.parse(raw);
+          const projectIndex = arr.findIndex((p: any) => p.id === currentId);
+          
+          if (projectIndex >= 0) {
+            const glossaryState = get();
+            const glossarySnapshot = {
+              arcs: JSON.parse(JSON.stringify(consolidatedArcs)),
+              fullText: glossaryState.fullText,
+              story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
+              honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
+              recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
+              style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
+              target_language: glossaryState.target_language,
+            };
+            
+            arr[projectIndex].glossary = glossarySnapshot;
+            localStorage.setItem('vsw.projects', JSON.stringify(arr));
+            console.log('✅ Glossary saved to localStorage immediately after consolidation');
+          }
+        }
+      } catch (saveError) {
+        console.error('❌ Failed to save glossary after consolidation:', saveError);
+      }
     } catch (error) {
       console.error('❌ Error consolidating results:', error);
       set({ isLoading: false });

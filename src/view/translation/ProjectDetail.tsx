@@ -29,8 +29,8 @@ interface ProjectDetailProps {
   project: TranslationProject;
 }
 
-export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project }) => {
-  const { selectProject, createTask, updateTask, tasks, updateProject } = useTranslationStore();
+export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project: initialProject }) => {
+  const { selectProject, createTask, updateTask, tasks, updateProject, setGlossary, projects, archivedProjects } = useTranslationStore();
   const [activeTaskId, setActiveTaskId] = useState<string>();
   const [selectedTab, setSelectedTab] = useState('overview');
   const [glossaryJson, setGlossaryJson] = useState('');
@@ -39,6 +39,23 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project }) => {
   
   const { isOpen: isEditGlossaryOpen, onOpen: onEditGlossaryOpen, onClose: onEditGlossaryClose } = useDisclosure();
   const { isOpen: isUploadGlossaryOpen, onOpen: onUploadGlossaryOpen, onClose: onUploadGlossaryClose } = useDisclosure();
+
+  // Always get the latest project from store to reflect updates
+  // Check both active and archived projects
+  const project = projects.find(p => p.id === initialProject.id) || 
+                 archivedProjects.find(p => p.id === initialProject.id) || 
+                 initialProject;
+  
+  // Debug: Log project state on every render
+  useEffect(() => {
+    console.log('[ProjectDetail] Project state:', {
+      id: project.id,
+      name: project.name,
+      status: project.status,
+      hasGlossary: !!project.glossary,
+      glossarySize: project.glossary ? JSON.stringify(project.glossary).length : 0,
+    });
+  }, [project]);
 
   const activeTask = activeTaskId ? tasks[activeTaskId] : undefined;
 
@@ -68,8 +85,24 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project }) => {
   };
 
   const handleStartTranslation = () => {
+    console.log('[ProjectDetail] Starting translation check:', {
+      projectId: project.id,
+      projectStatus: project.status,
+      hasGlossary: !!project.glossary,
+      glossaryKeys: project.glossary ? Object.keys(project.glossary) : 'none',
+    });
+    
     if (!project.glossary) {
-      alert('Please generate glossary first!');
+      console.error('[ProjectDetail] Glossary check failed:', {
+        status: project.status,
+        glossary: project.glossary,
+      });
+      alert(`Glossary not available. 
+      
+Status: ${project.status}
+Has Glossary: ${!!project.glossary}
+
+Please upload or generate glossary first.`);
       return;
     }
     
@@ -128,14 +161,30 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project }) => {
   };
 
   const handleUploadGlossary = () => {
+    if (!glossaryJson || !glossaryJson.trim()) {
+      alert('Please select a file or paste JSON content first.');
+      return;
+    }
+
     try {
       const parsedGlossary = JSON.parse(glossaryJson) as Glossary;
-      updateProject(project.id, { 
-        glossary: parsedGlossary,
-        status: 'glossary_completed' 
-      });
+      
+      // Validate that it's a valid glossary object
+      if (typeof parsedGlossary !== 'object' || parsedGlossary === null) {
+        throw new Error('Invalid glossary format');
+      }
+      
+      // Use setGlossary which properly updates status and saves to storage
+      setGlossary(project.id, parsedGlossary);
+      
+      // Close modal and clear input
       onUploadGlossaryClose();
       setGlossaryJson('');
+      
+      // Show success message
+      setTimeout(() => {
+        alert('Glossary uploaded successfully! You can now start translation.');
+      }, 100);
     } catch (error) {
       alert('Invalid JSON format. Please check your glossary file.');
       console.error('Failed to parse glossary:', error);
@@ -143,10 +192,29 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project }) => {
   };
 
   const handleSaveGlossary = () => {
+    if (!glossaryJson || !glossaryJson.trim()) {
+      alert('Glossary content cannot be empty.');
+      return;
+    }
+
     try {
       const parsedGlossary = JSON.parse(glossaryJson) as Glossary;
-      updateProject(project.id, { glossary: parsedGlossary });
+      
+      // Validate that it's a valid glossary object
+      if (typeof parsedGlossary !== 'object' || parsedGlossary === null) {
+        throw new Error('Invalid glossary format');
+      }
+      
+      // Use setGlossary to ensure proper storage sync
+      setGlossary(project.id, parsedGlossary);
+      
+      // Close modal
       onEditGlossaryClose();
+      
+      // Show success message
+      setTimeout(() => {
+        alert('Glossary saved successfully!');
+      }, 100);
     } catch (error) {
       alert('Invalid JSON format. Please check your glossary.');
       console.error('Failed to parse glossary:', error);

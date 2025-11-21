@@ -34,7 +34,7 @@ interface CreateProjectModalProps {
 
 const defaultAgentConfig: LLMConfig = {
   provider: 'gemini',
-  model: 'gemini-2.5-pro',
+  model: 'gemini-3-pro-preview',
   temperature: 0.3,
 };
 
@@ -1079,7 +1079,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
                 <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
                   <p className="text-xs text-blue-800 dark:text-blue-300">
-                    <strong>💡 Using Gemini 2.5 Pro</strong> for intelligent analysis. 
+                    <strong>💡 Using Gemini 3 Pro Preview</strong> for intelligent analysis. 
                     The AI will extract characters, events, locations, terms, relationships, and story structure.
                   </p>
                   <p className="text-xs text-blue-800 dark:text-blue-300 mt-2">

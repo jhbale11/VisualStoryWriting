@@ -6,16 +6,12 @@ import { FaLocationDot } from 'react-icons/fa6';
 import { FiFeather, FiTrash } from 'react-icons/fi';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
 import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
-import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
 import { LayoutUtils } from '../model/LayoutUtils';
 import { useModelStore } from '../model/Model';
-import ActionTimeline from './actionTimeline/ActionTimeline';
-import EntitiesEditor from './entityActionView/EntitiesEditor';
 import GlossaryEditPanel from './glossary/GlossaryEditPanel';
-import CharacterRelationshipGraph from './glossary/CharacterRelationshipGraph';
-import ArcCharacterMatrix from './glossary/ArcCharacterMatrix';
-import ArcRelationshipView from './glossary/ArcRelationshipView';
-import LocationsEditor from './locationView/LocationsEditor';
+import ArcRelationshipGraph from './glossary/ArcRelationshipGraph';
+import CharacterArcMatrix from './glossary/CharacterArcMatrix';
 
 function StoryFeaturesTab() {
   const storySummary = useGlossaryStore((state) => state.story_summary);
@@ -676,9 +672,12 @@ function StoryFeaturesTab() {
 }
 
 export default function GlossaryBuilder() {
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(() => {
+    return localStorage.getItem('vsw.currentProjectId');
+  });
+  const previousProjectIdRef = React.useRef<string | null>(currentProjectId);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [selectedTab, setSelectedTab] = useState('arc-overview');
-  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'events' | 'locations' | 'terms' | 'features' | 'arcs'>('characters');
+  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'terms' | 'features' | 'arcs'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedArcFilter, setSelectedArcFilter] = useState<string | null>(null);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
@@ -690,7 +689,7 @@ export default function GlossaryBuilder() {
   const [jsonData, setJsonData] = useState('');
   const [topHeight, setTopHeight] = useState(70);
   const [isDragging, setIsDragging] = useState(false);
-
+  
   const visualPanelRef = React.createRef<HTMLDivElement>();
 
   const glossaryArcs = useGlossaryStore(state => state.arcs);
@@ -705,53 +704,66 @@ export default function GlossaryBuilder() {
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
   const updateArc = useGlossaryStore(state => state.updateArc);
   
-  // Extract all data from arcs
+  // Extract all data from arcs - merge character info from all appearances
   const glossaryCharacters = React.useMemo(() => {
-    const chars: GlossaryCharacter[] = [];
-    const seenIds = new Set<string>();
+    const characterMap = new Map<string, GlossaryCharacter>();
     
-    glossaryArcs.forEach(arc => {
+    console.log(`🔍 Processing ${glossaryArcs.length} arcs for characters...`);
+    glossaryArcs.forEach((arc, idx) => {
+      console.log(`   Arc ${idx}: ${arc.name} - ${arc.characters?.length || 0} characters`);
       (arc.characters || []).forEach(char => {
-        if (!seenIds.has(char.id)) {
-          chars.push(char);
-          seenIds.add(char.id);
+        if (!char.name) {
+          console.warn(`     ⚠️ Character without name in arc ${arc.name}`);
+          return;
+        }
+        
+        // Use name (+ korean_name if available) as unique key
+        const englishName = char.name.toLowerCase().trim();
+        const koreanName = (char.korean_name || '').toLowerCase().trim();
+        const uniqueKey = koreanName ? `${englishName}|${koreanName}` : englishName;
+        
+        const existing = characterMap.get(uniqueKey);
+        if (existing) {
+          // Merge: take the most complete information
+          console.log(`     🔄 Merging character: ${char.name}`);
+          characterMap.set(uniqueKey, {
+            ...existing,
+            // Take longest/most complete fields
+            description: (char.description?.length || 0) > (existing.description?.length || 0) ? char.description : existing.description,
+            speech_style: (char.speech_style?.length || 0) > (existing.speech_style?.length || 0) ? char.speech_style : existing.speech_style,
+            physical_appearance: (char.physical_appearance?.length || 0) > (existing.physical_appearance?.length || 0) ? char.physical_appearance : existing.physical_appearance,
+            personality: (char.personality?.length || 0) > (existing.personality?.length || 0) ? char.personality : existing.personality,
+            // Merge arrays
+            traits: [...new Set([...(existing.traits || []), ...(char.traits || [])])],
+            abilities: [...new Set([...(existing.abilities || []), ...(char.abilities || [])])],
+            name_variants: { ...(existing.name_variants || {}), ...(char.name_variants || {}) },
+            // Use first non-empty values
+            age: char.age || existing.age,
+            gender: char.gender || existing.gender,
+            occupation: char.occupation || existing.occupation,
+            // Keep most important role
+            role: (char.role === 'protagonist' || existing.role === 'protagonist') ? 'protagonist' :
+                  (char.role === 'antagonist' || existing.role === 'antagonist') ? 'antagonist' :
+                  (char.role === 'major' || existing.role === 'major') ? 'major' :
+                  (existing.role || char.role),
+          });
+        } else {
+          console.log(`     ✅ Adding character: ${char.name} (${char.korean_name || 'no korean name'})`);
+          characterMap.set(uniqueKey, char);
         }
       });
     });
     
+    const chars = Array.from(characterMap.values());
     console.log(`📊 Extracted ${chars.length} unique characters from ${glossaryArcs.length} arcs`);
+    chars.forEach((c, i) => {
+      console.log(`   ${i + 1}. ${c.name} (${c.korean_name || 'no korean'}) - Role: ${c.role}`);
+    });
     return chars;
   }, [glossaryArcs]);
 
-  const glossaryEvents = React.useMemo(() => {
-    const events: GlossaryEvent[] = [];
-    const seenIds = new Set<string>();
-    
-    glossaryArcs.forEach(arc => {
-      (arc.events || []).forEach(event => {
-        if (!seenIds.has(event.id)) {
-          events.push(event);
-          seenIds.add(event.id);
-        }
-      });
-    });
-    return events;
-  }, [glossaryArcs]);
-
-  const glossaryLocations = React.useMemo(() => {
-    const locations: GlossaryLocation[] = [];
-    const seenIds = new Set<string>();
-    
-    glossaryArcs.forEach(arc => {
-      (arc.locations || []).forEach(loc => {
-        if (!seenIds.has(loc.id)) {
-          locations.push(loc);
-          seenIds.add(loc.id);
-        }
-      });
-    });
-    return locations;
-  }, [glossaryArcs]);
+  // Events removed - not used in translation glossary
+  // Locations removed - not needed for translation glossary
 
   const glossaryTerms = React.useMemo(() => {
     const terms: GlossaryTerm[] = [];
@@ -759,9 +771,19 @@ export default function GlossaryBuilder() {
     
     glossaryArcs.forEach(arc => {
       (arc.terms || []).forEach(term => {
-        if (!seenIds.has(term.id)) {
-          terms.push(term);
-          seenIds.add(term.id);
+        // Ensure term has an id and valid category
+        const category = term.category as 'name' | 'place' | 'item' | 'concept' | 'cultural' | 'other' | undefined;
+        const termWithId: GlossaryTerm = {
+          id: (term as any).id || `term-${term.original}-${Date.now()}-${Math.random()}`,
+          original: term.original,
+          translation: term.translation,
+          context: term.context,
+          category: category || 'other',
+        };
+        
+        if (!seenIds.has(termWithId.id)) {
+          terms.push(termWithId);
+          seenIds.add(termWithId.id);
         }
       });
     });
@@ -776,66 +798,194 @@ export default function GlossaryBuilder() {
       })()
     : glossaryCharacters;
 
-  const filteredEvents = selectedArcFilter
-    ? (() => {
-        const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
-        return arc ? (arc.events || []) : [];
-      })()
-    : glossaryEvents;
+  // filteredEvents removed - Events tab not used
 
   const setEntityNodes = useModelStore(state => state.setEntityNodes);
   const setActionEdges = useModelStore(state => state.setActionEdges);
   const setLocationNodes = useModelStore(state => state.setLocationNodes);
 
-  // Load project data on mount
+  // Monitor currentProjectId changes in localStorage
   useEffect(() => {
-    try {
-      const currentId = localStorage.getItem('vsw.currentProjectId');
-      if (currentId) {
-        const raw = localStorage.getItem('vsw.projects') || '[]';
-        const arr = JSON.parse(raw);
-        const project = arr.find((p: any) => p.id === currentId);
-        
-        if (project && project.glossary) {
-          // Load glossary data with deep copy to avoid reference issues
-          const glossaryData = project.glossary;
-          useGlossaryStore.setState({
-            arcs: JSON.parse(JSON.stringify(glossaryData.arcs || [])),
-            fullText: glossaryData.fullText || '',
-            story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
-            honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
-            recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
-            style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || {
-              name_format: 'english_given_name english_surname',
-              tone: 'Standard',
-              formality_level: 'medium',
-              themes: [],
-              genre: 'Web Novel',
-              sub_genres: [],
-              content_rating: 'Teen',
-              honorific_usage: 'Keep Korean honorifics with explanation on first use',
-              formal_speech_level: 'Match English formality to Korean speech level',
-              dialogue_style: 'natural',
-              narrative_style: {
-                point_of_view: 'third-person',
-                tense: 'past',
-                voice: 'neutral',
-                common_expressions: [],
-                atmosphere_descriptors: []
-              }
-            })),
-            target_language: glossaryData.target_language || 'en',
-          });
-          console.log('Loaded project:', currentId);
+    const checkProjectId = setInterval(() => {
+      const storedId = localStorage.getItem('vsw.currentProjectId');
+      if (storedId !== currentProjectId) {
+        console.log(`🔄 Project ID changed: ${currentProjectId} -> ${storedId}`);
+        setCurrentProjectId(storedId);
+      }
+    }, 500);
+
+    return () => clearInterval(checkProjectId);
+  }, [currentProjectId]);
+
+  // Load project data when currentProjectId changes
+  useEffect(() => {
+    if (!currentProjectId) {
+      console.log('⚠️ No project ID found');
+      return;
+    }
+
+    const previousProjectId = previousProjectIdRef.current;
+    const isProjectChanged = previousProjectId !== currentProjectId;
+    
+    console.log(`🔄 Loading project: ${currentProjectId}`, {
+      previousProject: previousProjectId,
+      isProjectChanged,
+    });
+
+    // Only reset if project actually changed (not on initial load or same project)
+    if (isProjectChanged && previousProjectId !== null) {
+      console.log('🧹 Resetting glossary store (project changed)...');
+      
+      // Save current project before switching
+      try {
+        if (previousProjectId) {
+          const raw = localStorage.getItem('vsw.projects') || '[]';
+          const arr = JSON.parse(raw);
+          const prevProjectIndex = arr.findIndex((p: any) => p.id === previousProjectId);
+          
+          if (prevProjectIndex >= 0) {
+            const glossaryState = useGlossaryStore.getState();
+            const glossarySnapshot = {
+              arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
+              fullText: glossaryState.fullText,
+              story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
+              honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
+              recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
+              style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
+              target_language: glossaryState.target_language,
+            };
+            
+            arr[prevProjectIndex] = {
+              ...arr[prevProjectIndex],
+              updatedAt: Date.now(),
+              glossary: glossarySnapshot,
+            };
+            localStorage.setItem('vsw.projects', JSON.stringify(arr));
+            console.log(`💾 Saved previous project: ${previousProjectId} (${glossaryState.arcs.length} arcs)`);
+          }
         }
+      } catch (error) {
+        console.error('Failed to save previous project:', error);
+      }
+
+      // Reset glossary store
+      useGlossaryStore.setState({
+        arcs: [],
+        fullText: '',
+        story_summary: { logline: '', blurb: '' },
+        honorifics: {},
+        recurring_phrases: {},
+        style_guide: {
+          name_format: 'english_given_name english_surname',
+          tone: 'Standard',
+          formality_level: 'medium',
+          themes: [],
+          genre: 'Web Novel',
+          sub_genres: [],
+          content_rating: 'Teen',
+          honorific_usage: 'Keep Korean honorifics with explanation on first use',
+          formal_speech_level: 'Match English formality to Korean speech level',
+          dialogue_style: 'natural',
+          narrative_style: {
+            point_of_view: 'third-person',
+            tense: 'past',
+            voice: 'neutral',
+            common_expressions: [],
+            atmosphere_descriptors: []
+          }
+        },
+        target_language: 'en',
+        isLoading: false,
+      });
+    }
+
+    // Load new project data
+    try {
+      const raw = localStorage.getItem('vsw.projects') || '[]';
+      const arr = JSON.parse(raw);
+      const project = arr.find((p: any) => p.id === currentProjectId);
+      
+      if (project && project.glossary) {
+        const glossaryData = project.glossary;
+        const incomingArcsCount = (glossaryData.arcs || []).length;
+        
+        // Check if we should load (don't overwrite if we have current data and this is not a project change)
+        const currentState = useGlossaryStore.getState();
+        const hasCurrentData = currentState.arcs.length > 0;
+        
+        if (!isProjectChanged && hasCurrentData && !currentState.isLoading) {
+          console.log(`⏭️ Skipping load: same project with existing data (${currentState.arcs.length} arcs)`);
+          previousProjectIdRef.current = currentProjectId;
+          return;
+        }
+        
+        console.log(`📖 Loading project glossary for ${currentProjectId}:`, {
+          incomingArcs: incomingArcsCount,
+        });
+        
+        const loadedArcs = JSON.parse(JSON.stringify(glossaryData.arcs || []));
+        
+        // Count characters/events/terms for logging
+        let totalChars = 0;
+        let totalEvents = 0;
+        let totalTerms = 0;
+        loadedArcs.forEach((arc: any) => {
+          totalChars += (arc.characters || []).length;
+          totalEvents += (arc.events || []).length;
+          totalTerms += (arc.terms || []).length;
+        });
+        
+        useGlossaryStore.setState({
+          arcs: loadedArcs,
+          fullText: glossaryData.fullText || '',
+          story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
+          honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
+          recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
+          style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || {
+            name_format: 'english_given_name english_surname',
+            tone: 'Standard',
+            formality_level: 'medium',
+            themes: [],
+            genre: 'Web Novel',
+            sub_genres: [],
+            content_rating: 'Teen',
+            honorific_usage: 'Keep Korean honorifics with explanation on first use',
+            formal_speech_level: 'Match English formality to Korean speech level',
+            dialogue_style: 'natural',
+            narrative_style: {
+              point_of_view: 'third-person',
+              tense: 'past',
+              voice: 'neutral',
+              common_expressions: [],
+              atmosphere_descriptors: []
+            }
+          })),
+          target_language: glossaryData.target_language || 'en',
+        });
+        
+        console.log(`✅ Loaded project: ${currentProjectId}`);
+        console.log(`📊 Loaded glossary: ${incomingArcsCount} arcs, ${totalChars} characters (total in arcs), ${totalEvents} events, ${totalTerms} terms`);
+      } else {
+        console.log(`ℹ️ No glossary data found for project ${currentProjectId}`);
       }
     } catch (error) {
       console.error('Failed to load project:', error);
     }
-  }, []);
+
+    // Update previous project ID reference
+    previousProjectIdRef.current = currentProjectId;
+  }, [currentProjectId]);
+
+  // Auto-select first arc when arcs are loaded
+  useEffect(() => {
+    if (glossaryArcs.length > 0 && !selectedArcFilter) {
+      setSelectedArcFilter(glossaryArcs[0].id);
+      console.log(`🎯 Auto-selected first arc for visualization: ${glossaryArcs[0].name}`);
+    }
+  }, [glossaryArcs, selectedArcFilter]);
 
   useEffect(() => {
-    if ((glossaryCharacters.length > 0 || glossaryEvents.length > 0) &&
+    if (glossaryCharacters.length > 0 &&
         useModelStore.getState().entityNodes.length === 0 &&
         useModelStore.getState().actionEdges.length === 0 &&
         useModelStore.getState().locationNodes.length === 0) {
@@ -848,7 +998,7 @@ export default function GlossaryBuilder() {
       LayoutUtils.optimizeNodeLayout('entity', entityNodes, setEntityNodes, center, 120, 100);
       LayoutUtils.optimizeNodeLayout('location', locationNodes, setLocationNodes, center, 120);
     }
-  }, [glossaryCharacters, glossaryEvents, glossaryLocations]);
+  }, [glossaryCharacters]);
 
   useEffect(() => {
     if (escapePressed) {
@@ -858,25 +1008,37 @@ export default function GlossaryBuilder() {
     }
   }, [escapePressed]);
 
-  useEffect(() => {
-    const center = { x: visualPanelRef.current!.clientWidth / 2, y: visualPanelRef.current!.clientHeight / 2 };
-    LayoutUtils.optimizeNodeLayout('entity', useModelStore.getState().entityNodes, useModelStore.getState().setEntityNodes, center, 120, 100);
-    LayoutUtils.optimizeNodeLayout('location', useModelStore.getState().locationNodes, useModelStore.getState().setLocationNodes, center, 120);
-  }, [selectedTab]);
-
   // Auto-save on glossary changes
   useEffect(() => {
     const saveTimer = setTimeout(() => {
       try {
-        const currentId = localStorage.getItem('vsw.currentProjectId');
-        if (!currentId) return; // Don't auto-save if no project is selected
+        if (!currentProjectId) {
+          console.log('⏸️ Skipping auto-save: no project selected');
+          return;
+        }
 
         const raw = localStorage.getItem('vsw.projects') || '[]';
         const arr = JSON.parse(raw);
-        const projectIndex = arr.findIndex((p: any) => p.id === currentId);
+        const projectIndex = arr.findIndex((p: any) => p.id === currentProjectId);
         
         if (projectIndex >= 0) {
           const glossaryState = useGlossaryStore.getState();
+          
+          // Don't save if currently loading (extraction in progress)
+          if (glossaryState.isLoading) {
+            console.log('⏸️ Skipping auto-save: extraction in progress');
+            return;
+          }
+          
+          // Don't save empty glossary if project previously had data
+          const existingProject = arr[projectIndex];
+          const existingArcsCount = existingProject.glossary?.arcs?.length || 0;
+          const currentArcsCount = glossaryState.arcs.length;
+          
+          if (currentArcsCount === 0 && existingArcsCount > 0) {
+            console.log(`⏸️ Skipping auto-save: would overwrite ${existingArcsCount} arcs with empty data`);
+            return;
+          }
           
           // Create a deep copy to avoid reference issues
           const glossarySnapshot = {
@@ -903,15 +1065,18 @@ export default function GlossaryBuilder() {
             }
           };
           localStorage.setItem('vsw.projects', JSON.stringify(arr));
-          console.log('Auto-saved project:', currentId);
+          console.log(`💾 Auto-saved project: ${currentProjectId} (${currentArcsCount} arcs, ${glossaryCharacters.length} chars)`);
+        } else {
+          console.warn(`⚠️ Project ${currentProjectId} not found in localStorage`);
         }
       } catch (error) {
-        console.error('Auto-save failed:', error);
+        console.error('❌ Auto-save failed:', error);
       }
     }, 3000); // Debounce for 3 seconds to avoid conflicts with manual editing
 
     return () => clearTimeout(saveTimer);
   }, [
+    currentProjectId,
     glossaryArcs,
     storySummary,
     honorifics,
@@ -987,9 +1152,13 @@ export default function GlossaryBuilder() {
         </h1>
         <div style={{ display: 'flex', gap: '10px' }}>
           <Button size="sm" variant="bordered" onClick={() => { try {
+            if (!currentProjectId) {
+              console.error('No project ID found');
+              return;
+            }
+            
             const raw = localStorage.getItem('vsw.projects') || '[]';
             const arr = JSON.parse(raw);
-            const currentId = localStorage.getItem('vsw.currentProjectId');
             const glossaryState = useGlossaryStore.getState();
 
             // Create deep copy to avoid reference issues
@@ -1004,8 +1173,8 @@ export default function GlossaryBuilder() {
             };
 
             const snapshot = {
-              id: currentId || (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`),
-              name: (arr.find((p: any) => p.id === currentId)?.name) || `Project ${new Date().toLocaleString()}`,
+              id: currentProjectId,
+              name: (arr.find((p: any) => p.id === currentProjectId)?.name) || `Project ${new Date().toLocaleString()}`,
               updatedAt: Date.now(),
               glossary: glossarySnapshot,
               view: {
@@ -1022,9 +1191,10 @@ export default function GlossaryBuilder() {
             const idx = arr.findIndex((p: any) => p.id === snapshot.id);
             if (idx >= 0) { next[idx] = snapshot; } else { next = [snapshot, ...arr]; }
             localStorage.setItem('vsw.projects', JSON.stringify(next));
-            localStorage.setItem('vsw.currentProjectId', snapshot.id);
-            console.log('Manually saved project:', snapshot.id);
-          } catch {} }}>Save</Button>
+            console.log(`💾 Manually saved project: ${currentProjectId} (${glossaryState.arcs.length} arcs)`);
+          } catch (error) {
+            console.error('Failed to save project:', error);
+          } }}>Save</Button>
           <Button size="sm" variant="flat" onClick={() => { window.location.hash = '/'; }}>← Back to Home</Button>
           <Tooltip content="Import JSON">
             <Button size="sm" variant="flat" startContent={<FaUpload />} onClick={onImportOpen}>
@@ -1041,13 +1211,133 @@ export default function GlossaryBuilder() {
 
       <div style={{ display: 'flex', flexDirection: 'row', flexGrow: 1, height: '80%' }}>
         <div id="visual-container" className='flex flex-col' style={{ position: 'relative', width: '60%' }}>
-          <div style={{ width: '100%', height: `${topHeight}%`, background: '#F3F4F6', borderBottom: '1px solid #DDDDDF' }} ref={visualPanelRef}>
-            {selectedTab === 'arc-overview' && (
-              <div style={{ width: '100%', height: '100%', background: '#F9FAFB' }}>
-                <ArcCharacterMatrix
+          {glossaryArcs.length === 0 ? (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '100%',
+              height: '100%',
+              padding: '40px',
+              textAlign: 'center',
+              color: '#999',
+              background: '#F9FAFB'
+            }}>
+              <div>
+                <div style={{ fontSize: '64px', marginBottom: '20px' }}>🔗</div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>No Arcs Yet</div>
+                <div style={{ fontSize: '14px' }}>
+                  Process text to extract story arcs and character relationships
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Top: Arc Relationships Graph */}
+              <div style={{ width: '100%', height: `${topHeight}%`, background: '#F3F4F6', position: 'relative', display: 'flex', flexDirection: 'column' }} ref={visualPanelRef}>
+                {/* Arc Selection Bar */}
+                <div style={{ 
+                  padding: '12px 16px', 
+                  background: 'white', 
+                  borderBottom: '2px solid #e5e7eb',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  flexShrink: 0
+                }}>
+                  <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#667eea', whiteSpace: 'nowrap' }}>
+                    📖 Arc:
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 1, overflowY: 'auto', maxHeight: '60px' }}>
+                    {glossaryArcs.map((arc, idx) => (
+                      <Chip
+                        key={arc.id}
+                        onClick={() => setSelectedArcFilter(arc.id)}
+                        color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
+                        variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
+                        size="sm"
+                        style={{ cursor: 'pointer', fontSize: '11px' }}
+                      >
+                        {idx + 1}. {arc.name.length > 20 ? arc.name.substring(0, 20) + '...' : arc.name}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Arc Relationships Graph */}
+                <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                  {selectedArcFilter && (() => {
+                    const selectedArc = glossaryArcs.find(a => a.id === selectedArcFilter);
+                    return selectedArc ? (
+                      <ArcRelationshipGraph 
+                        arc={selectedArc} 
+                        characters={glossaryCharacters} 
+                      />
+                    ) : null;
+                  })()}
+                  {!selectedArcFilter && (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#999', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🔗</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
+                        Select an Arc
+                      </div>
+                      <div style={{ fontSize: '13px' }}>
+                        Choose an arc above to see interactive relationship graph
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {/* Resizer */}
+              <div
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  const startY = e.clientY;
+                  const startTopHeight = topHeight;
+                  
+                  const handleMouseMove = (moveEvent: MouseEvent) => {
+                    const container = document.getElementById('visual-container');
+                    if (!container) return;
+                    const rect = container.getBoundingClientRect();
+                    const deltaY = moveEvent.clientY - startY;
+                    const deltaPercent = (deltaY / rect.height) * 100;
+                    const newTopHeight = startTopHeight + deltaPercent;
+                    setTopHeight(Math.min(Math.max(newTopHeight, 30), 70));
+                  };
+                  
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+                  
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }}
+                style={{
+                  height: '8px',
+                  background: '#e5e7eb',
+                  cursor: 'ns-resize',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background 0.2s',
+                  zIndex: 10
+                }}
+              >
+                <div style={{
+                  width: '40px',
+                  height: '4px',
+                  background: '#9ca3af',
+                  borderRadius: '2px',
+                }} />
+              </div>
+
+              {/* Bottom: Character Arc Matrix */}
+              <div style={{ height: `${100 - topHeight}%`, overflow: 'auto', background: '#F9FAFB' }}>
+                <CharacterArcMatrix
                   arcs={glossaryArcs}
                   characters={glossaryCharacters}
-                  selectedArcId={selectedArcFilter}
                   onArcSelect={(arcId) => setSelectedArcFilter(arcId)}
                   onCharacterSelect={(charId) => {
                     const char = glossaryCharacters.find(c => c.id === charId);
@@ -1058,200 +1348,38 @@ export default function GlossaryBuilder() {
                   }}
                 />
               </div>
-            )}
-            {selectedTab === 'arc-relationships' && (
-              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', position: 'relative' }}>
-                {glossaryArcs.length === 0 ? (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    height: '100%',
-                    padding: '40px',
-                    textAlign: 'center',
-                    color: '#999'
-                  }}>
-                    <div>
-                      <div style={{ fontSize: '64px', marginBottom: '20px' }}>🔗</div>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>No Arcs Yet</div>
-                      <div style={{ fontSize: '14px' }}>
-                        Process text to extract story arcs and character relationships
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Arc Selector */}
-                    <div style={{
-                      position: 'absolute',
-                      top: '10px',
-                      left: '10px',
-                      zIndex: 15,
-                      background: 'white',
-                      padding: '12px',
-                      borderRadius: '10px',
-                      boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
-                      maxWidth: '300px'
-                    }}>
-                      <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>
-                        Filter by Arc:
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <Button
-                          size="sm"
-                          color={!selectedArcFilter ? 'secondary' : 'default'}
-                          variant={!selectedArcFilter ? 'solid' : 'bordered'}
-                          onClick={() => setSelectedArcFilter(null)}
-                          style={{ justifyContent: 'flex-start', fontSize: '12px' }}
-                        >
-                          All Arcs
-                        </Button>
-                        {glossaryArcs.map((arc) => (
-                          <Button
-                            key={arc.id}
-                            size="sm"
-                            color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
-                            variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
-                            onClick={() => setSelectedArcFilter(arc.id)}
-                            style={{ justifyContent: 'flex-start', fontSize: '12px' }}
-                          >
-                            {arc.name}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
+            </>
+          )}
 
-                    {/* Character Relationship Graph with Arc Filter */}
-                    <CharacterRelationshipGraph
-                      characters={glossaryCharacters}
-                      selectedCharacterId={selectedCharacterId}
-                      arcFilter={selectedArcFilter}
-                      onCharacterSelect={(char) => {
-                        setEditingItem({ type: 'character', item: char });
-                        setSelectedCharacterId(char.id);
-                      }}
-                    />
-                  </>
-                )}
+          {/* Reset Button - Top Right */}
+          {glossaryArcs.length > 0 && (
+            <>
+              <Button 
+                style={{ position: 'absolute', right: 10, top: 10, fontSize: 18, zIndex: 100 }} 
+                isIconOnly 
+                onClick={(e) => {
+                  LayoutUtils.stopAllSimulations();
+                  useModelStore.getState().setActionEdges([]);
+                  useModelStore.getState().setLocationNodes([]);
+                  useModelStore.getState().setEntityNodes([]);
+                  useModelStore.getState().setFilteredActionsSegment(null, null);
+                  useModelStore.getState().setHighlightedActionsSegment(null, null);
+                  useGlossaryStore.getState().reset();
+                }}
+              >
+                <FaTrashAlt />
+              </Button>
+
+              <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', display: 'flex', gap: '10px', background: 'white', padding: '10px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', zIndex: 100 }}>
+                <span style={{ fontSize: '14px', color: '#666' }}>
+                  {glossaryArcs.length} arcs · {glossaryCharacters.length} characters · {glossaryTerms.length} terms
+                </span>
               </div>
-            )}
-            {selectedTab === 'entities' && <ReactFlowProvider><EntitiesEditor /></ReactFlowProvider>}
-            {selectedTab === 'locations' && <ReactFlowProvider><LocationsEditor /></ReactFlowProvider>}
-            {selectedTab === 'relations' && (
-              <div style={{ width: '100%', height: '100%', background: '#F9FAFB', position: 'relative' }}>
-                {/* Arc filter for relations */}
-                {glossaryArcs.length > 0 && (
-                  <div style={{
-                    position: 'absolute',
-                    top: '60px',
-                    left: '10px',
-                    zIndex: 15,
-                    background: 'white',
-                    padding: '12px',
-                    borderRadius: '10px',
-                    boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
-                    maxWidth: '250px'
-                  }}>
-                    <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '8px', color: '#666' }}>
-                      Filter by Arc:
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <Button
-                        size="sm"
-                        color={!selectedArcFilter ? 'secondary' : 'default'}
-                        variant={!selectedArcFilter ? 'solid' : 'bordered'}
-                        onClick={() => setSelectedArcFilter(null)}
-                        style={{ justifyContent: 'flex-start', fontSize: '12px' }}
-                      >
-                        All Characters
-                      </Button>
-                      {glossaryArcs.map((arc) => (
-                        <Button
-                          key={arc.id}
-                          size="sm"
-                          color={selectedArcFilter === arc.id ? 'secondary' : 'default'}
-                          variant={selectedArcFilter === arc.id ? 'solid' : 'bordered'}
-                          onClick={() => setSelectedArcFilter(arc.id)}
-                          style={{ justifyContent: 'flex-start', fontSize: '12px' }}
-                        >
-                          {arc.name}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <CharacterRelationshipGraph
-                  characters={glossaryCharacters}
-                  selectedCharacterId={selectedCharacterId}
-                  onCharacterSelect={(char) => {
-                    setEditingItem({ type: 'character', item: char });
-                    setSelectedCharacterId(char.id);
-                  }}
-                />
-              </div>
-            )}
-            <Tabs
-              keyboardActivation='manual'
-              onSelectionChange={setSelectedTab as any}
-              selectedKey={selectedTab}
-              color='primary'
-              variant='bordered'
-              style={{ position: 'absolute', left: '50%', top: 10, transform: 'translate(-50%, 0)' }}
-              classNames={{ tabList: 'bg-white' }}
-            >
-              <Tab key={'arc-overview'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>📖 Arc Overview</span>} />
-              <Tab key={'arc-relationships'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>🔗 Arc Relations</span>} />
-              <Tab key={'entities'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><IoPersonCircle style={{ marginRight: 3, fontSize: 22 }} /> Characters & Events</span>} />
-              <Tab key={'locations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}><FaLocationDot style={{ marginRight: 3, fontSize: 18 }} /> Locations</span>} />
-              <Tab key={'relations'} title={<span style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', fontSize: 15 }}>👥 All Relations</span>} />
-            </Tabs>
-
-            <Button style={{ position: 'absolute', right: 10, top: 10, fontSize: 18 }} isIconOnly onClick={(e) => {
-              LayoutUtils.stopAllSimulations();
-              useModelStore.getState().setActionEdges([]);
-              useModelStore.getState().setLocationNodes([]);
-              useModelStore.getState().setEntityNodes([]);
-              useModelStore.getState().setFilteredActionsSegment(null, null);
-              useModelStore.getState().setHighlightedActionsSegment(null, null);
-              useGlossaryStore.getState().reset();
-            }}><FaTrashAlt /></Button>
-
-            <div style={{ position: 'absolute', left: '50%', bottom: 20, transform: 'translateX(-50%)', display: 'flex', gap: '10px', background: 'white', padding: '10px', borderRadius: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-              <span style={{ fontSize: '14px', color: '#666' }}>
-                {glossaryArcs.length} arcs · {glossaryCharacters.length} characters · {glossaryEvents.length} events · {glossaryLocations.length} locations · {glossaryTerms.length} terms
-              </span>
-            </div>
-          </div>
-
-          <div
-            onMouseDown={handleMouseDown}
-            style={{
-              height: '8px',
-              background: isDragging ? '#667eea' : '#e5e7eb',
-              cursor: 'ns-resize',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: isDragging ? 'none' : 'background 0.2s',
-              zIndex: 10,
-            }}
-          >
-            <div
-              style={{
-                width: '40px',
-                height: '4px',
-                background: isDragging ? 'white' : '#9ca3af',
-                borderRadius: '2px',
-                transition: 'background 0.2s',
-              }}
-            />
-          </div>
-
-          <div style={{ height: `${100 - topHeight}%`, display: 'flex', flexDirection: 'column' }}>
-            <ReactFlowProvider><ActionTimeline /></ReactFlowProvider>
-          </div>
+            </>
+          )}
         </div>
 
+        {/* Right Panel - Glossary Editor */}
         <div style={{ width: '40%', background: 'white', borderLeft: '1px solid #ddd', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '20px', borderBottom: '1px solid #ddd' }}>
             <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '15px' }}>Glossary</h2>
@@ -1303,22 +1431,6 @@ export default function GlossaryBuilder() {
                 style={{ cursor: 'pointer' }}
               >
                 Characters ({filteredCharacters.length})
-              </Chip>
-              <Chip
-                onClick={() => setGlossaryTab('events')}
-                color={glossaryTab === 'events' ? 'secondary' : 'default'}
-                variant={glossaryTab === 'events' ? 'solid' : 'bordered'}
-                style={{ cursor: 'pointer' }}
-              >
-                Events ({filteredEvents.length})
-              </Chip>
-              <Chip
-                onClick={() => setGlossaryTab('locations')}
-                color={glossaryTab === 'locations' ? 'secondary' : 'default'}
-                variant={glossaryTab === 'locations' ? 'solid' : 'bordered'}
-                style={{ cursor: 'pointer' }}
-              >
-                Locations ({glossaryLocations.length})
               </Chip>
               <Chip
                 onClick={() => setGlossaryTab('terms')}
@@ -1394,17 +1506,51 @@ export default function GlossaryBuilder() {
                             {char.emoji} {char.name}
                           </h3>
                           {char.korean_name && (
-                            <p style={{ fontSize: '14px', color: '#888', margin: 0 }}>
+                            <p style={{ fontSize: '14px', color: '#888', margin: '2px 0 0 0' }}>
                               {char.korean_name}
+                            </p>
+                          )}
+                          {char.age && (
+                            <p style={{ fontSize: '13px', color: '#667eea', margin: '4px 0 0 0', fontWeight: '500' }}>
+                              연령: {char.age}
                             </p>
                           )}
                         </div>
                       </CardHeader>
                       <Divider />
                       <CardBody>
+                        {char.speech_style && (
+                          <div style={{ marginBottom: '10px', padding: '8px', background: '#f0f9ff', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                            <div style={{ fontSize: '11px', color: '#667eea', fontWeight: 'bold', marginBottom: '4px' }}>
+                              💬 말투 특징
+                            </div>
+                            <div style={{ fontSize: '13px', color: '#555' }}>
+                              {char.speech_style}
+                            </div>
+                          </div>
+                        )}
+                        {char.physical_appearance && (
+                          <p style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                            <span style={{ fontWeight: 'bold', color: '#888' }}>외형:</span> {char.physical_appearance}
+                          </p>
+                        )}
                         <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
                           {char.description}
                         </p>
+                        {char.name_variants && Object.keys(char.name_variants).length > 0 && (
+                          <div style={{ marginBottom: '10px' }}>
+                            <div style={{ fontSize: '11px', color: '#888', fontWeight: 'bold', marginBottom: '4px' }}>
+                              호칭/별명:
+                            </div>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {Object.entries(char.name_variants).map(([key, value], idx) => (
+                                <Chip key={idx} size="sm" variant="bordered" color="primary" style={{ fontSize: '11px' }}>
+                                  {value}
+                                </Chip>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {char.traits && char.traits.length > 0 && (
                           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
                             {char.traits.slice(0, 3).map((trait, idx) => (
@@ -1423,80 +1569,6 @@ export default function GlossaryBuilder() {
                     </Card>
                   ))
                 )}
-              </div>
-            )}
-
-            {glossaryTab === 'events' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {filteredEvents
-                  .filter(event => event.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                  .map((event) => (
-                    <Card
-                      key={event.id}
-                      isPressable
-                      isHoverable
-                      onClick={() => setEditingItem({ type: 'event', item: event })}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <CardHeader>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'start' }}>
-                          <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
-                            {event.name}
-                          </h3>
-                          <Chip
-                            size="sm"
-                            color={event.importance === 'major' ? 'secondary' : 'default'}
-                            variant="flat"
-                          >
-                            {event.importance}
-                          </Chip>
-                        </div>
-                      </CardHeader>
-                      <Divider />
-                      <CardBody>
-                        <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
-                          {event.description}
-                        </p>
-                        {event.characters_involved.length > 0 && (
-                          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                            {event.characters_involved.map((charName, idx) => (
-                              <Chip key={idx} size="sm" variant="bordered">
-                                {charName}
-                              </Chip>
-                            ))}
-                          </div>
-                        )}
-                      </CardBody>
-                    </Card>
-                  ))}
-              </div>
-            )}
-
-            {glossaryTab === 'locations' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {glossaryLocations
-                  .filter(loc => loc.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                  .map((loc) => (
-                    <Card
-                      key={loc.id}
-                      isPressable
-                      isHoverable
-                      onClick={() => setEditingItem({ type: 'location', item: loc })}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <CardHeader>
-                        <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
-                          {loc.emoji} {loc.name}
-                        </h3>
-                      </CardHeader>
-                      <Divider />
-                      <CardBody>
-                        <p style={{ fontSize: '14px', color: '#666' }}>
-                          {loc.description}
-                        </p>
-                      </CardBody>
-                    </Card>
-                  ))}
               </div>
             )}
 
@@ -1579,27 +1651,9 @@ export default function GlossaryBuilder() {
                             size="sm"
                             color="secondary"
                             onPress={() => {
-                              if (editingTerm.original && editingTerm.translation) {
-                                if (editingTerm.id) {
-                                  updateTerm(editingTerm.id, {
-                                    original: editingTerm.original,
-                                    translation: editingTerm.translation,
-                                    context: editingTerm.context,
-                                    category: editingTerm.category as any,
-                                    notes: editingTerm.notes
-                                  });
-                                } else {
-                                  addTerm({
-                                    id: `term_${Date.now()}`,
-                                    original: editingTerm.original,
-                                    translation: editingTerm.translation,
-                                    context: editingTerm.context,
-                                    category: editingTerm.category as any,
-                                    notes: editingTerm.notes
-                                  });
-                                }
-                                setEditingTerm(null);
-                              }
+                              // Note: Term editing is now managed within arcs
+                              console.warn('Term editing is deprecated - terms should be managed within arcs');
+                              setEditingTerm(null);
                             }}
                           >
                             Save
@@ -1637,7 +1691,10 @@ export default function GlossaryBuilder() {
                             isIconOnly
                             variant="flat"
                             color="danger"
-                            onPress={() => deleteTerm(term.id)}
+                            onPress={() => {
+                              // Note: Term deletion is now managed within arcs
+                              console.warn('Term deletion is deprecated - terms should be managed within arcs');
+                            }}
                           >
                             <FiTrash />
                           </Button>
@@ -1699,7 +1756,7 @@ export default function GlossaryBuilder() {
                               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                                 {arc.characters.map((arcChar, idx) => {
                                   const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
-                                  const role = typeof arcChar === 'string' ? '' : arcChar.role_in_arc;
+                                  const role = typeof arcChar === 'string' ? '' : (arcChar as any).role || '';
                                   return (
                                     <Chip 
                                       key={idx} 
@@ -1716,28 +1773,47 @@ export default function GlossaryBuilder() {
                             </div>
                           )}
                           
-                          {arc.relationships && arc.relationships.length > 0 && (
-                            <div>
-                              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
-                                Relationships ({arc.relationships.length})
-                              </div>
+                          <div>
+                            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
+                              Relationships ({arc.relationships?.length || 0})
+                            </div>
+                            {arc.relationships && arc.relationships.length > 0 ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {arc.relationships.slice(0, 3).map((rel, idx) => (
-                                  <div key={idx} style={{ fontSize: '12px', color: '#555', padding: '6px', background: 'white', borderRadius: '6px' }}>
-                                    <span style={{ fontWeight: 'bold' }}>{rel.character_a}</span>
-                                    {' '}{rel.sentiment === 'positive' ? '↔️' : rel.sentiment === 'negative' ? '⚔️' : '—'}{' '}
-                                    <span style={{ fontWeight: 'bold' }}>{rel.character_b}</span>
-                                    {': '}{rel.description}
+                                {arc.relationships.map((rel, idx) => (
+                                  <div key={idx} style={{ fontSize: '12px', color: '#555', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                      <span style={{ fontWeight: 'bold', color: '#333' }}>{rel.character_a}</span>
+                                      <span style={{ fontSize: '16px' }}>
+                                        {rel.sentiment === 'positive' ? '↔️' : rel.sentiment === 'negative' ? '⚔️' : '—'}
+                                      </span>
+                                      <span style={{ fontWeight: 'bold', color: '#333' }}>{rel.character_b}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '8px' }}>
+                                      <div style={{ fontSize: '11px' }}>
+                                        <span style={{ color: '#888', fontWeight: '600' }}>유형:</span>
+                                        <span style={{ marginLeft: '6px', color: '#555' }}>{rel.relationship_type}</span>
+                                      </div>
+                                      {rel.addressing && (
+                                        <div style={{ fontSize: '11px' }}>
+                                          <span style={{ color: '#888', fontWeight: '600' }}>호칭:</span>
+                                          <span style={{ marginLeft: '6px', color: '#667eea', fontWeight: 'bold' }}>"{rel.addressing}"</span>
+                                        </div>
+                                      )}
+                                      {rel.description && (
+                                        <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic', marginTop: '2px' }}>
+                                          {rel.description}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 ))}
-                                {arc.relationships.length > 3 && (
-                                  <div style={{ fontSize: '11px', color: '#888', fontStyle: 'italic' }}>
-                                    +{arc.relationships.length - 3} more relationships
-                                  </div>
-                                )}
                               </div>
-                            </div>
-                          )}
+                            ) : (
+                              <div style={{ fontSize: '11px', color: '#999', fontStyle: 'italic', padding: '8px', background: '#f9fafb', borderRadius: '6px' }}>
+                                No relationships extracted for this arc
+                              </div>
+                            )}
+                          </div>
 
                           {arc.key_events && arc.key_events.length > 0 && (
                             <div>
@@ -1768,16 +1844,23 @@ export default function GlossaryBuilder() {
                               <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
                                 Translation Terms ({arc.terms.length})
                               </div>
-                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                 {arc.terms.slice(0, 5).map((term, idx) => (
-                                  <Chip key={idx} size="sm" variant="bordered" style={{ fontSize: '10px' }}>
-                                    {term.original} → {term.translation}
-                                  </Chip>
+                                  <div key={idx} style={{ fontSize: '11px', padding: '4px 8px', background: 'white', borderRadius: '4px', border: '1px solid #e5e7eb' }}>
+                                    <span style={{ fontWeight: 'bold', color: '#667eea' }}>{term.original}</span>
+                                    {' → '}
+                                    <span style={{ color: '#555' }}>{term.translation}</span>
+                                    {term.category && (
+                                      <span style={{ marginLeft: '6px', fontSize: '10px', color: '#888', fontStyle: 'italic' }}>
+                                        ({term.category})
+                                      </span>
+                                    )}
+                                  </div>
                                 ))}
                                 {arc.terms.length > 5 && (
-                                  <Chip size="sm" variant="flat">
-                                    +{arc.terms.length - 5} more
-                                  </Chip>
+                                  <div style={{ fontSize: '10px', color: '#888', fontStyle: 'italic', paddingLeft: '8px' }}>
+                                    +{arc.terms.length - 5} more terms
+                                  </div>
                                 )}
                               </div>
                             </div>

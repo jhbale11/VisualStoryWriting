@@ -120,12 +120,13 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<void> {
     const store = useTranslationStore.getState();
-    const project = store.getProject(projectId);
+    const project = await store.getProject(projectId);
 
     if (!project) {
       throw new Error('Project not found');
     }
 
+    console.log('[TaskRunner] Starting glossary task for project:', projectId);
     store.updateProject(projectId, { status: 'glossary_running' });
     store.updateTask(taskId, { progress: 0.1, message: 'Analyzing text...' });
 
@@ -146,8 +147,15 @@ export class TaskRunner {
 
     const glossary = await agent.analyzeText(project.file_content);
 
+    console.log('[TaskRunner] Glossary extracted, saving...', {
+      projectId,
+      glossaryKeys: Object.keys(glossary),
+    });
+    
     store.updateTask(taskId, { progress: 0.9, message: 'Saving glossary...' });
     store.setGlossary(projectId, glossary);
+    
+    console.log('[TaskRunner] Glossary saved successfully');
   }
 
   private async runTranslationTask(
@@ -156,11 +164,17 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<void> {
     const store = useTranslationStore.getState();
-    const project = store.getProject(projectId);
+    const project = await store.getProject(projectId);
 
     if (!project) {
       throw new Error('Project not found');
     }
+
+    console.log('[TaskRunner] Translation task - project state:', {
+      projectId,
+      hasGlossary: !!project.glossary,
+      status: project.status,
+    });
 
     if (!project.glossary) {
       throw new Error('Glossary not available. Please generate glossary first.');
@@ -246,7 +260,7 @@ export class TaskRunner {
     signal: AbortSignal
   ): Promise<void> {
     const store = useTranslationStore.getState();
-    const project = store.getProject(projectId);
+    const project = await store.getProject(projectId);
 
     if (!project) {
       throw new Error('Project not found');
