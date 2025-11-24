@@ -114,9 +114,18 @@ const createChunks = (text: string, chunkSize: number, overlap: number): Chunk[]
         translations: {},
       });
       
-      // Start new chunk with overlap
-      const overlapLines = Math.floor(overlap / 100);
-      currentChunk = lines.slice(Math.max(0, i - overlapLines), i + 1).join('\n');
+      // Start new chunk with overlap (if specified)
+      if (overlap > 0) {
+        const overlapLines = Math.floor(overlap / 100);
+        if (overlapLines > 0) {
+          currentChunk = lines.slice(Math.max(0, i - overlapLines), i + 1).join('\n');
+        } else {
+          currentChunk = line;
+        }
+      } else {
+        // No overlap - start fresh with current line
+        currentChunk = line;
+      }
       chunkIndex++;
     } else {
       currentChunk += (currentChunk ? '\n' : '') + line;

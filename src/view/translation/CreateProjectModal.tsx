@@ -587,7 +587,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   
   // Settings
   const [chunkSize, setChunkSize] = useState(8000);
-  const [overlap, setOverlap] = useState(200);
+  const [overlap, setOverlap] = useState(0);
   const [maxRetries, setMaxRetries] = useState(2);
   const [enableProofreader, setEnableProofreader] = useState(true);
   
