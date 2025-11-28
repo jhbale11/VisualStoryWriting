@@ -13,6 +13,7 @@ export const TranslationMain: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [glossaryListKey, setGlossaryListKey] = useState(0);
+  const [glossaryProjectCount, setGlossaryProjectCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get store data with error handling
@@ -99,12 +100,7 @@ export const TranslationMain: React.FC = () => {
   const translationProjects = projects.filter(p => p.type === 'translation');
   const publishProjects = projects.filter(p => p.type === 'publish');
 
-  // Glossary projects from vsw.projects (have glossary field but no type or type === 'glossary')
-  const vswProjectsRaw = localStorage.getItem('vsw.projects') || '[]';
-  const vswProjects = JSON.parse(vswProjectsRaw);
-  const glossaryProjects = vswProjects.filter(
-    (p: any) => p.glossary && (!p.type || p.type === 'glossary')
-  );
+  const hasGlossaryProjects = glossaryProjectCount > 0;
 
   if (selectedProject) {
     return <ProjectDetail project={selectedProject} />;
@@ -179,7 +175,7 @@ export const TranslationMain: React.FC = () => {
             >
               <CardBody>
                 <p className="text-sm text-gray-600 dark:text-gray-400">Glossary Projects</p>
-                <p className="text-3xl font-bold text-purple-600">{glossaryProjects.length}</p>
+                <p className="text-3xl font-bold text-purple-600">{glossaryProjectCount}</p>
               </CardBody>
             </Card>
 
@@ -247,7 +243,7 @@ export const TranslationMain: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <span>📚 Glossary Builder</span>
                   <span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">
-                    {glossaryProjects.length}
+                    {glossaryProjectCount}
                   </span>
                 </div>
               }
@@ -269,8 +265,8 @@ export const TranslationMain: React.FC = () => {
                   </Button>
                 </div>
 
-                {glossaryProjects.length === 0 ? (
-                  <Card className="bg-white dark:bg-gray-800">
+                {!hasGlossaryProjects && (
+                  <Card className="bg-white dark:bg-gray-800 mb-6">
                     <CardBody className="text-center py-12">
                       <div className="text-6xl mb-4">📚</div>
                       <p className="text-gray-500 dark:text-gray-400 text-lg mb-4">
@@ -298,9 +294,12 @@ export const TranslationMain: React.FC = () => {
                       </Button>
                     </CardBody>
                   </Card>
-                ) : (
-                  <GlossaryProjectList key={glossaryListKey} />
                 )}
+
+                <GlossaryProjectList
+                  key={glossaryListKey}
+                  onProjectsChanged={(projects) => setGlossaryProjectCount(projects.length)}
+                />
               </div>
             </Tab>
 

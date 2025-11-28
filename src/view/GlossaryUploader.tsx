@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { FiUpload } from "react-icons/fi";
 import { useTranslationStore } from '../translation/store/TranslationStore';
 import { taskRunner } from '../translation/services/TaskRunner';
+import { glossaryProjectStorage } from '../glossary/services/GlossaryProjectStorage';
+import type { GlossaryProjectRecord } from '../glossary/types';
 
 export default function GlossaryUploader() {
   const [file, setFile] = useState<File | null>(null);
@@ -55,24 +57,13 @@ export default function GlossaryUploader() {
         : `Glossary Project ${new Date().toLocaleString()}`;
       
       // Create placeholder project
-      const raw = localStorage.getItem('vsw.projects') || '[]';
-      const arr = JSON.parse(raw);
-      const placeholderProject = {
+      const placeholderProject: GlossaryProjectRecord = {
         id: vswProjectId,
         name: projectName,
         updatedAt: Date.now(),
-        glossary: {},
-        view: {
-          entityNodes: [],
-          actionEdges: [],
-          locationNodes: [],
-          textState: [],
-          isReadOnly: false,
-          relationsPositions: {}
-        }
+        status: 'processing',
       };
-      arr.unshift(placeholderProject);
-      localStorage.setItem('vsw.projects', JSON.stringify(arr));
+      await glossaryProjectStorage.saveProject(placeholderProject);
       
       // Create task
       const newTaskId = createTask({

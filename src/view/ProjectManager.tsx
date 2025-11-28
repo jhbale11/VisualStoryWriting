@@ -1,136 +1,77 @@
 import { Button, Card, CardBody, CardHeader, Divider, Input } from '@nextui-org/react';
 import { useEffect, useState } from 'react';
-import { useGlossaryStore } from '../model/GlossaryModel';
-import { useModelStore } from '../model/Model';
-
-type SavedProject = {
-  id: string;
-  name: string;
-  updatedAt: number;
-  glossary: ReturnType<typeof getGlossarySnapshot>;
-  view: ReturnType<typeof getViewSnapshot> & { relationsPositions?: Record<string, { x: number, y: number }> };
-}
-
-function getGlossarySnapshot() {
-  const s = useGlossaryStore.getState();
-  return {
-    characters: s.characters,
-    events: s.events,
-    locations: s.locations,
-    terms: s.terms,
-    fullText: s.fullText,
-    story_summary: s.story_summary,
-    key_events_and_arcs: s.key_events_and_arcs,
-    honorifics: s.honorifics,
-    recurring_phrases: s.recurring_phrases,
-    world_building_notes: s.world_building_notes,
-    style_guide: s.style_guide,
-    target_language: s.target_language,
-  };
-}
-
-function getViewSnapshot() {
-  const s = useModelStore.getState();
-  return {
-    entityNodes: s.entityNodes,
-    actionEdges: s.actionEdges,
-    locationNodes: s.locationNodes,
-    textState: s.textState,
-    isReadOnly: s.isReadOnly,
-  };
-}
-
-function loadGlossarySnapshot(snapshot: ReturnType<typeof getGlossarySnapshot>) {
-  // Deep copy to avoid reference issues
-  useGlossaryStore.setState({
-    characters: JSON.parse(JSON.stringify(snapshot.characters || [])),
-    events: JSON.parse(JSON.stringify(snapshot.events || [])),
-    locations: JSON.parse(JSON.stringify(snapshot.locations || [])),
-    terms: JSON.parse(JSON.stringify(snapshot.terms || [])),
-    fullText: snapshot.fullText || '',
-    story_summary: JSON.parse(JSON.stringify(snapshot.story_summary || { logline: '', blurb: '' })),
-    key_events_and_arcs: JSON.parse(JSON.stringify(snapshot.key_events_and_arcs || [])),
-    honorifics: JSON.parse(JSON.stringify(snapshot.honorifics || {})),
-    recurring_phrases: JSON.parse(JSON.stringify(snapshot.recurring_phrases || {})),
-    world_building_notes: JSON.parse(JSON.stringify(snapshot.world_building_notes || [])),
-    style_guide: JSON.parse(JSON.stringify(snapshot.style_guide || {
-      tone: '',
-      formality_level: 'medium',
-      themes: [],
-      genre: '',
-      sub_genres: [],
-      content_rating: '',
-      name_format: '',
-      honorific_usage: '',
-      formal_speech_level: '',
-      dialogue_style: '',
-      narrative_vocabulary: '',
-      narrative_style: {
-        point_of_view: '',
-        tense: '',
-        voice: '',
-        common_expressions: [],
-        atmosphere_descriptors: []
-      }
-    })),
-    target_language: snapshot.target_language || 'en',
-  });
-}
-
-function loadViewSnapshot(snapshot: ReturnType<typeof getViewSnapshot>) {
-  const s = useModelStore.getState();
-  s.setEntityNodes(snapshot.entityNodes);
-  s.setActionEdges(snapshot.actionEdges);
-  s.setLocationNodes(snapshot.locationNodes);
-  s.setTextState(snapshot.textState, true, false);
-  s.setIsReadOnly(snapshot.isReadOnly);
-}
+import { useGlossaryStore, serializeGlossaryState, restoreGlossarySnapshot } from '../model/GlossaryModel';
+import { glossaryProjectStorage } from '../glossary/services/GlossaryProjectStorage';
+import type { GlossaryProjectRecord } from '../glossary/types';
+import { captureViewSnapshot, applyViewSnapshot } from '../glossary/utils/viewSnapshots';
+import { activeGlossaryCache } from '../glossary/services/ActiveGlossaryCache';
 
 export default function ProjectManager() {
-  const [projects, setProjects] = useState<SavedProject[]>([]);
+  const [projects, setProjects] = useState<GlossaryProjectRecord[]>([]);
   const [name, setName] = useState('');
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('vsw.projects') || '[]';
-      setProjects(JSON.parse(raw));
-    } catch {}
+    let mounted = true;
+    glossaryProjectStorage.listProjects()
+      .then(list => {
+        if (mounted) setProjects(list);
+      })
+      .catch(error => console.error('[ProjectManager] Failed to load projects', error));
+    return () => { mounted = false; };
   }, []);
 
-  const saveProject = () => {
-    const raw = localStorage.getItem('vsw.projects') || '[]';
-    const arr: SavedProject[] = JSON.parse(raw);
+  const saveProject = async () => {
     const id = (globalThis.crypto && 'randomUUID' in globalThis.crypto ? crypto.randomUUID() : `p-${Date.now()}`);
-    const project: SavedProject = {
+    const projectName = name || `Project ${new Date().toLocaleString()}`;
+    const glossarySnapshot = serializeGlossaryState();
+    const viewSnapshot = captureViewSnapshot();
+    const record: GlossaryProjectRecord = {
       id,
-      name: name || `Project ${new Date().toLocaleString()}`,
+      name: projectName,
       updatedAt: Date.now(),
-      glossary: getGlossarySnapshot(),
-      view: { ...getViewSnapshot(), relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}') },
+      glossary: glossarySnapshot,
+      view: viewSnapshot,
     };
-    const next = [project, ...arr];
-    localStorage.setItem('vsw.projects', JSON.stringify(next));
-    setProjects(next);
-    setName('');
-    try { localStorage.setItem('vsw.currentProjectId', id); } catch {}
-  };
 
-  const loadProject = (p: SavedProject) => {
-    loadGlossarySnapshot(p.glossary);
-    loadViewSnapshot(p.view);
     try {
-      const positions = p.view && (p.view as any).relationsPositions ? (p.view as any).relationsPositions : {};
-      localStorage.setItem('vsw.relations.positions', JSON.stringify(positions));
-      localStorage.setItem('vsw.currentProjectId', p.id);
-    } catch {}
-    window.location.hash = '/glossary-builder';
+      await glossaryProjectStorage.saveProject(record);
+      setProjects(prev => [record, ...prev.filter(p => p.id !== id)]);
+      setName('');
+      localStorage.setItem('vsw.currentProjectId', id);
+      activeGlossaryCache.saveFromRecord(record);
+    } catch (error) {
+      console.error('[ProjectManager] Failed to save project', error);
+      alert('Failed to save project. Please try again.');
+    }
   };
 
-  const deleteProject = (id: string) => {
-    const next = projects.filter(p => p.id !== id);
-    localStorage.setItem('vsw.projects', JSON.stringify(next));
-    setProjects(next);
+  const loadProject = async (project: GlossaryProjectRecord) => {
+    try {
+      const latest = await glossaryProjectStorage.getProject(project.id) || project;
+      if (latest.glossary) {
+        restoreGlossarySnapshot(latest.glossary, { fullTextFallback: latest.glossary.fullText || '' });
+      } else {
+        useGlossaryStore.getState().reset();
+      }
+      applyViewSnapshot(latest.view);
+      localStorage.setItem('vsw.currentProjectId', latest.id);
+      activeGlossaryCache.saveFromRecord(latest);
+      window.location.hash = '/glossary-builder';
+    } catch (error) {
+      console.error('[ProjectManager] Failed to load project', error);
+      alert('Failed to load project.');
+    }
+  };
+
+  const deleteProject = async (id: string) => {
+    try {
+      await glossaryProjectStorage.deleteProject(id);
+      setProjects(prev => prev.filter(p => p.id !== id));
+    } catch (error) {
+      console.error('[ProjectManager] Failed to delete project', error);
+      alert('Failed to delete project.');
+    }
   };
 
   const filtered = projects.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()));

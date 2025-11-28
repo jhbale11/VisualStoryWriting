@@ -3,6 +3,7 @@ import { GlossaryAgent } from '../agents/GlossaryAgent';
 import { PublishAgent } from '../agents/PublishAgent';
 import { TranslationWorkflow } from '../workflow/TranslationWorkflow';
 import { LLMClientFactory } from '../llm/clients';
+import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
 
 export class TaskRunner {
   private runningTasks: Set<string> = new Set();
@@ -337,7 +338,7 @@ export class TaskRunner {
     };
 
     // Import glossary store dynamically
-    const { useGlossaryStore, initGemini } = await import('../../model/GlossaryModel');
+    const { useGlossaryStore, initGemini, serializeGlossaryState } = await import('../../model/GlossaryModel');
 
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
@@ -409,47 +410,18 @@ export class TaskRunner {
     });
 
     const glossaryState = useGlossaryStore.getState();
-    const raw = localStorage.getItem('vsw.projects') || '[]';
-    const arr = JSON.parse(raw);
+    const glossarySnapshot = serializeGlossaryState(glossaryState);
+    const existingProject = await glossaryProjectStorage.getProject(vswProjectId);
 
-    // Update existing project or create new one
-    const existingIndex = arr.findIndex((p: any) => p.id === vswProjectId);
-
-    const project = {
+    await glossaryProjectStorage.saveProject({
       id: vswProjectId,
-      name: arr[existingIndex]?.name || `Glossary Project ${new Date().toLocaleString()}`,
+      name: existingProject?.name || `Glossary Project ${new Date().toLocaleString()}`,
       updatedAt: Date.now(),
-      glossary: {
-        characters: glossaryState.characters,
-        events: glossaryState.events,
-        locations: glossaryState.locations,
-        terms: glossaryState.terms,
-        story_summary: glossaryState.story_summary,
-        key_events_and_arcs: glossaryState.key_events_and_arcs,
-        honorifics: glossaryState.honorifics,
-        recurring_phrases: glossaryState.recurring_phrases,
-        world_building_notes: glossaryState.world_building_notes,
-        style_guide: glossaryState.style_guide,
-        target_language: glossaryState.target_language,
-        fullText: glossaryState.fullText,
-      },
-      view: arr[existingIndex]?.view || {
-        entityNodes: [],
-        actionEdges: [],
-        locationNodes: [],
-        textState: [],
-        isReadOnly: false,
-        relationsPositions: {}
-      }
-    };
+      glossary: glossarySnapshot,
+      view: existingProject?.view,
+      status: 'ready',
+    });
 
-    if (existingIndex >= 0) {
-      arr[existingIndex] = project;
-    } else {
-      arr.unshift(project);
-    }
-
-    localStorage.setItem('vsw.projects', JSON.stringify(arr));
     localStorage.setItem('vsw.currentProjectId', vswProjectId);
 
     store.updateTask(taskId, {

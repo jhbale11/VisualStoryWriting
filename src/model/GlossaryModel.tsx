@@ -2,6 +2,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { create } from 'zustand';
 import type { EntityNode, ActionEdge, LocationNode } from './Model';
 import { MarkerType } from '@xyflow/react';
+import { browserStorage } from '../translation/services/BrowserStorage';
+import type { TranslationProject, ExtendedGlossary } from '../translation/types';
 
 let geminiAPI: GoogleGenerativeAI | null = null;
 
@@ -179,6 +181,10 @@ interface GlossaryAction {
   updateCharacterGlobally: (character: GlossaryCharacter) => void;
   updateLocationGlobally: (location: GlossaryLocation) => void;
   updateTermGlobally: (term: GlossaryTerm) => void;
+
+  // Project Storage Actions
+  loadProject: (projectId: string) => Promise<void>;
+  saveProject: (projectId: string) => Promise<void>;
 }
 
 const initialState: GlossaryState = {
@@ -1526,6 +1532,107 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }, null, 2);
   },
 
+  loadProject: async (projectId: string) => {
+    set({ isLoading: true });
+    try {
+      console.log(`📂 Loading project ${projectId} from storage...`);
+      const project = await browserStorage.getProject(projectId);
+
+      if (!project) {
+        console.error(`❌ Project ${projectId} not found`);
+        set({ isLoading: false });
+        return;
+      }
+
+      // Clear current state before loading new data to prevent bleeding
+      set({
+        ...initialState,
+        isLoading: true, // Keep loading true
+        fullText: project.file_content || ''
+      });
+
+      if (project.glossary) {
+        const glossary = project.glossary as any; // Cast to any to access our custom fields
+
+        // Handle both legacy structure and new structure
+        const arcs = glossary.arcs || [];
+        const story_summary = glossary.story_summary || { logline: '', blurb: '' };
+        const honorifics = glossary.honorifics || {};
+        const recurring_phrases = glossary.recurring_phrases || {};
+        const style_guide = glossary.style_guide || initialState.style_guide;
+        const target_language = glossary.target_language || 'en';
+        const fullText = project.file_content || ''; // Use project file content as full text
+
+        set({
+          arcs,
+          story_summary,
+          honorifics,
+          recurring_phrases,
+          style_guide,
+          target_language,
+          fullText,
+          isLoading: false
+        });
+        console.log(`✅ Project loaded successfully: ${arcs.length} arcs`);
+      } else {
+        // Initialize with empty state if no glossary data but project exists
+        set({
+          ...initialState,
+          fullText: project.file_content || '',
+          isLoading: false
+        });
+        console.log('⚠️ Project loaded but has no glossary data');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load project:', error);
+      set({ isLoading: false });
+    }
+  },
+
+  saveProject: async (projectId: string) => {
+    try {
+      console.log(`💾 Saving project ${projectId} to storage...`);
+      const state = get();
+
+      // Don't save if we are still loading
+      if (state.isLoading) {
+        console.warn('⚠️ Attempted to save while loading, skipping...');
+        return;
+      }
+
+      const project = await browserStorage.getProject(projectId);
+
+      if (!project) {
+        console.error(`❌ Cannot save: Project ${projectId} not found`);
+        return;
+      }
+
+      // Create glossary object matching our state
+      const glossaryData: ExtendedGlossary = {
+        english: "Glossary", // Required field stub
+        arcs: state.arcs,
+        story_summary: state.story_summary,
+        honorifics: state.honorifics,
+        recurring_phrases: state.recurring_phrases,
+        style_guide: state.style_guide,
+        target_language: state.target_language,
+        // Also map to BasicGlossary fields for compatibility if needed
+        characters: [], // We could populate this from arcs if we wanted backward compat
+        terms: [],
+        places: []
+      };
+
+      // Update project
+      project.glossary = glossaryData;
+      project.updated_at = new Date().toISOString();
+
+      await browserStorage.saveProject(project);
+      console.log('✅ Project saved successfully');
+    } catch (error) {
+      console.error('❌ Failed to save project:', error);
+    }
+  },
+
   updateCharacterGlobally: (updatedCharacter: GlossaryCharacter) => {
     set((state) => {
       const newArcs = state.arcs.map(arc => {
@@ -1627,6 +1734,209 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
 
 
 }));
+
+type LegacyCollection<T> = T[] | Record<string, T>;
+
+export interface GlossarySnapshot {
+  arcs: GlossaryArc[];
+  story_summary: StorySummary;
+  honorifics: { [key: string]: string };
+  recurring_phrases: { [korean: string]: string };
+  style_guide: StyleGuide;
+  target_language: 'en' | 'ja';
+  fullText: string;
+  characters?: GlossaryCharacter[];
+  events?: GlossaryEvent[];
+  locations?: GlossaryLocation[];
+  terms?: GlossaryTerm[];
+  key_events_and_arcs?: string[];
+  world_building_notes?: string[];
+}
+
+const deepClone = <T>(value: T): T => {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value));
+};
+
+const normalizeLegacyCollection = <T>(value?: LegacyCollection<T>): T[] | undefined => {
+  if (!value) return undefined;
+  if (Array.isArray(value)) {
+    return deepClone(value);
+  }
+  return Object.values(value).map(item => deepClone(item));
+};
+
+const deriveArcsFromLegacy = (snapshot?: Partial<GlossarySnapshot>): GlossaryArc[] => {
+  if (snapshot?.arcs && snapshot.arcs.length > 0) {
+    return deepClone(snapshot.arcs);
+  }
+
+  const legacyCharacters = normalizeLegacyCollection(snapshot?.characters) ?? [];
+  const legacyEvents = normalizeLegacyCollection(snapshot?.events) ?? [];
+  const legacyLocations = normalizeLegacyCollection(snapshot?.locations) ?? [];
+  const legacyTerms = normalizeLegacyCollection(snapshot?.terms) ?? [];
+
+  if (
+    legacyCharacters.length === 0 &&
+    legacyEvents.length === 0 &&
+    legacyLocations.length === 0 &&
+    legacyTerms.length === 0
+  ) {
+    return [];
+  }
+
+  return [{
+    id: 'legacy-arc',
+    name: 'Legacy Glossary',
+    description: 'Imported from legacy format',
+    theme: '',
+    characters: legacyCharacters,
+    events: legacyEvents,
+    locations: legacyLocations,
+    relationships: [],
+    key_events: snapshot?.key_events_and_arcs ? [...snapshot.key_events_and_arcs] : [],
+    background_changes: snapshot?.world_building_notes ? [...snapshot.world_building_notes] : [],
+    terms: legacyTerms,
+    start_chunk: 0,
+    end_chunk: 0,
+  }];
+};
+
+const aggregateLegacyFromArcs = (arcs: GlossaryArc[]) => {
+  const characterMap = new Map<string, GlossaryCharacter>();
+  const eventMap = new Map<string, GlossaryEvent>();
+  const locationMap = new Map<string, GlossaryLocation>();
+  const termMap = new Map<string, GlossaryTerm>();
+
+  arcs.forEach(arc => {
+    (arc.characters || []).forEach(char => {
+      const key = (char.id || char.name || `character-${characterMap.size}`).toLowerCase();
+      if (!characterMap.has(key)) {
+        characterMap.set(key, deepClone(char));
+      }
+    });
+
+    (arc.events || []).forEach(event => {
+      const key = (event.id || event.name || `event-${eventMap.size}`).toLowerCase();
+      if (!eventMap.has(key)) {
+        eventMap.set(key, deepClone(event));
+      }
+    });
+
+    (arc.locations || []).forEach(location => {
+      const key = (location.id || location.name || `location-${locationMap.size}`).toLowerCase();
+      if (!locationMap.has(key)) {
+        locationMap.set(key, deepClone(location));
+      }
+    });
+
+    (arc.terms || []).forEach(term => {
+      const key = (term.id || term.original || `term-${termMap.size}`).toLowerCase();
+      if (!termMap.has(key)) {
+        termMap.set(key, deepClone(term));
+      }
+    });
+  });
+
+  return {
+    characters: Array.from(characterMap.values()),
+    events: Array.from(eventMap.values()),
+    locations: Array.from(locationMap.values()),
+    terms: Array.from(termMap.values()),
+    keyEvents: arcs.flatMap(arc => arc.key_events || []),
+    worldBuildingNotes: arcs.flatMap(arc => arc.background_changes || []),
+  };
+};
+
+const mergeStyleGuide = (styleGuide?: StyleGuide): StyleGuide => {
+  const base = deepClone(initialState.style_guide);
+  if (!styleGuide) return base;
+  const incoming = deepClone(styleGuide);
+  return {
+    ...base,
+    ...incoming,
+    narrative_style: {
+      ...base.narrative_style,
+      ...(incoming.narrative_style || {}),
+    },
+  };
+};
+
+const normalizeSnapshot = (
+  snapshot?: Partial<GlossarySnapshot>,
+  options?: { fullTextFallback?: string }
+): GlossarySnapshot => {
+  const arcs = deriveArcsFromLegacy(snapshot);
+  const aggregated = aggregateLegacyFromArcs(arcs);
+
+  const normalizedCharacters = normalizeLegacyCollection(snapshot?.characters) ?? aggregated.characters;
+  const normalizedEvents = normalizeLegacyCollection(snapshot?.events) ?? aggregated.events;
+  const normalizedLocations = normalizeLegacyCollection(snapshot?.locations) ?? aggregated.locations;
+  const normalizedTerms = normalizeLegacyCollection(snapshot?.terms) ?? aggregated.terms;
+
+  return {
+    arcs,
+    story_summary: snapshot?.story_summary ? deepClone(snapshot.story_summary) : { logline: '', blurb: '' },
+    honorifics: snapshot?.honorifics ? deepClone(snapshot.honorifics) : {},
+    recurring_phrases: snapshot?.recurring_phrases ? deepClone(snapshot.recurring_phrases) : {},
+    style_guide: mergeStyleGuide(snapshot?.style_guide),
+    target_language: snapshot?.target_language ?? 'en',
+    fullText: snapshot?.fullText ?? options?.fullTextFallback ?? '',
+    characters: normalizedCharacters,
+    events: normalizedEvents,
+    locations: normalizedLocations,
+    terms: normalizedTerms,
+    key_events_and_arcs: snapshot?.key_events_and_arcs
+      ? [...snapshot.key_events_and_arcs]
+      : aggregated.keyEvents,
+    world_building_notes: snapshot?.world_building_notes
+      ? [...snapshot.world_building_notes]
+      : aggregated.worldBuildingNotes,
+  };
+};
+
+export const serializeGlossaryState = (state?: GlossaryState): GlossarySnapshot => {
+  const source = state ?? useGlossaryStore.getState();
+  const arcs = deepClone(source.arcs);
+  const aggregated = aggregateLegacyFromArcs(arcs);
+
+  return {
+    arcs,
+    story_summary: deepClone(source.story_summary),
+    honorifics: deepClone(source.honorifics),
+    recurring_phrases: deepClone(source.recurring_phrases),
+    style_guide: deepClone(source.style_guide),
+    target_language: source.target_language,
+    fullText: source.fullText,
+    characters: aggregated.characters,
+    events: aggregated.events,
+    locations: aggregated.locations,
+    terms: aggregated.terms,
+    key_events_and_arcs: aggregated.keyEvents,
+    world_building_notes: aggregated.worldBuildingNotes,
+  };
+};
+
+export const restoreGlossarySnapshot = (
+  snapshot?: Partial<GlossarySnapshot>,
+  options?: { fullTextFallback?: string }
+): GlossarySnapshot => {
+  const normalized = normalizeSnapshot(snapshot, options);
+  useGlossaryStore.setState({
+    arcs: normalized.arcs,
+    story_summary: normalized.story_summary,
+    honorifics: normalized.honorifics,
+    recurring_phrases: normalized.recurring_phrases,
+    style_guide: normalized.style_guide,
+    target_language: normalized.target_language,
+    fullText: normalized.fullText,
+    isLoading: false,
+  });
+
+  return normalized;
+};
 
 export function generateGlossaryString(state: GlossaryState): string {
   const { arcs, style_guide, honorifics, recurring_phrases } = state;

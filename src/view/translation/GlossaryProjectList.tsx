@@ -1,50 +1,67 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Card, CardBody, CardHeader, Button, Chip } from '@nextui-org/react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
+import { restoreGlossarySnapshot, useGlossaryStore } from '../../model/GlossaryModel';
+import { applyViewSnapshot } from '../../glossary/utils/viewSnapshots';
+import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
+import type { GlossaryProjectRecord } from '../../glossary/types';
 
-interface GlossaryProject {
-  id: string;
-  name: string;
-  updatedAt: number;
-  glossary?: {
-    characters?: any[];
-    events?: any[];
-    locations?: any[];
-    terms?: any[];
-    fullText?: string;
-  };
+interface GlossaryProjectListProps {
+  onProjectsChanged?: (projects: GlossaryProjectRecord[]) => void;
 }
 
-export const GlossaryProjectList: React.FC = () => {
-  const [projects, setProjects] = React.useState<GlossaryProject[]>([]);
+export const GlossaryProjectList: React.FC<GlossaryProjectListProps> = ({ onProjectsChanged }) => {
+  const [projects, setProjects] = useState<GlossaryProjectRecord[]>([]);
   const tasks = useTranslationStore(state => state.tasks);
 
-  React.useEffect(() => {
+  const updateState = useCallback((list: GlossaryProjectRecord[]) => {
+    setProjects(list);
+    onProjectsChanged?.(list);
+  }, [onProjectsChanged]);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const list = await glossaryProjectStorage.listProjects();
+      updateState(list);
+    } catch (error) {
+      console.error('[GlossaryProjectList] Failed to load projects', error);
+      updateState([]);
+    }
+  }, [updateState]);
+
+  useEffect(() => {
     loadProjects();
-  }, []);
+  }, [loadProjects]);
 
   // Auto-refresh when glossary extraction tasks complete
-  React.useEffect(() => {
+  useEffect(() => {
     const glossaryTasks = Object.values(tasks).filter(t => t.type === 'glossary_extraction');
     const hasCompletedTask = glossaryTasks.some(t => t.status === 'completed');
-    
+
     if (hasCompletedTask) {
-      // Reload projects when a glossary extraction task completes
       loadProjects();
     }
-  }, [tasks]);
+  }, [tasks, loadProjects]);
 
-  const loadProjects = () => {
-    const raw = localStorage.getItem('vsw.projects') || '[]';
-    const allProjects = JSON.parse(raw);
-    // Filter for glossary projects (those with glossary but without type or with type 'glossary')
-    const glossaryProjects = allProjects.filter(
-      (p: any) => p.glossary && (!p.type || p.type === 'glossary')
-    );
-    setProjects(glossaryProjects);
-  };
+  const preloadProject = useCallback(async (projectId: string) => {
+    try {
+      const project = await glossaryProjectStorage.getProject(projectId);
+      if (project?.glossary) {
+        restoreGlossarySnapshot(project.glossary, {
+          fullTextFallback: project.glossary.fullText || '',
+        });
+      } else {
+        useGlossaryStore.getState().reset();
+      }
+      applyViewSnapshot(project?.view);
+    } catch (error) {
+      console.error('[GlossaryProjectList] Failed to preload project', error);
+      useGlossaryStore.getState().reset();
+    }
+  }, []);
 
   const openProject = (projectId: string) => {
+    preloadProject(projectId);
     localStorage.setItem('vsw.currentProjectId', projectId);
     window.location.hash = '/glossary-builder';
   };
@@ -52,18 +69,16 @@ export const GlossaryProjectList: React.FC = () => {
   const deleteProject = (projectId: string) => {
     if (!confirm('Are you sure you want to delete this project?')) return;
 
-    const raw = localStorage.getItem('vsw.projects') || '[]';
-    const allProjects = JSON.parse(raw);
-    const filtered = allProjects.filter((p: any) => p.id !== projectId);
-    localStorage.setItem('vsw.projects', JSON.stringify(filtered));
-    loadProjects();
+    glossaryProjectStorage.deleteProject(projectId)
+      .then(() => loadProjects())
+      .catch(error => console.error('[GlossaryProjectList] Failed to delete project', error));
   };
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleString();
   };
 
-  const getProjectStats = (project: GlossaryProject) => {
+  const getProjectStats = (project: GlossaryProjectRecord) => {
     const chars = project.glossary?.characters?.length || 0;
     const events = project.glossary?.events?.length || 0;
     const locations = project.glossary?.locations?.length || 0;
@@ -86,7 +101,7 @@ export const GlossaryProjectList: React.FC = () => {
       {projects.map((project) => {
         const stats = getProjectStats(project);
         const task = getProjectTask(project.id);
-        
+
         return (
           <Card
             key={project.id}

@@ -18,6 +18,8 @@ import {
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import type { AgentConfigs, LLMConfig } from '../../translation/types';
 import { taskRunner } from '../../translation/services/TaskRunner';
+import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
+import type { GlossaryProjectRecord } from '../../glossary/types';
 import {
   DEFAULT_TRANSLATION_PROMPT_EN,
   DEFAULT_TRANSLATION_PROMPT_JA,
@@ -653,9 +655,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
 
     if (projectType === 'glossary') {
-      // Process glossary with task-based system
-      processGlossaryWithTask();
-      // Close modal immediately so user can navigate to other pages
+      await processGlossaryWithTask();
       onClose();
     } else {
       // Create translation project
@@ -677,7 +677,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
   };
 
-  const processGlossaryWithTask = () => {
+  const processGlossaryWithTask = async () => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -692,25 +692,14 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     const projectName = name.trim() || `Glossary Project ${new Date().toLocaleString()}`;
 
-    // Create placeholder project in vsw.projects
-    const raw = localStorage.getItem('vsw.projects') || '[]';
-    const arr = JSON.parse(raw);
-    const placeholderProject = {
+    // Create placeholder project
+    const placeholderProject: GlossaryProjectRecord = {
       id: vswProjectId,
       name: projectName,
       updatedAt: Date.now(),
-      glossary: {},
-      view: {
-        entityNodes: [],
-        actionEdges: [],
-        locationNodes: [],
-        textState: [],
-        isReadOnly: false,
-        relationsPositions: {}
-      }
+      status: 'processing',
     };
-    arr.unshift(placeholderProject);
-    localStorage.setItem('vsw.projects', JSON.stringify(arr));
+    await glossaryProjectStorage.saveProject(placeholderProject);
 
     // Create task
     const newTaskId = createTask({
