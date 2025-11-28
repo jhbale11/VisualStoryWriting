@@ -6,7 +6,7 @@ export class ParagraphMatchingAgent {
 
   constructor() {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    
+
     if (!apiKey) {
       console.warn('VITE_GEMINI_API_KEY is not set - paragraph matching will not be available');
       throw new Error('VITE_GEMINI_API_KEY is not set');
@@ -26,21 +26,34 @@ export class ParagraphMatchingAgent {
    */
   async matchParagraphs(koreanText: string, englishText: string): Promise<ParagraphMatchResult> {
     // Split English text by double newlines
-    const englishParagraphs = englishText.split(/\n\n+/).filter(p => p.trim().length > 0);
-    
+    let englishParagraphs = englishText.split(/\n\n+/).filter(p => p.trim().length > 0);
+
+    // Fallback logic: If we have very few paragraphs (e.g. just 1) but the text is long,
+    // it might be that the layout agent failed to use double newlines.
+    // In that case, try splitting by single newlines.
+    if (englishParagraphs.length <= 1 && englishText.length > 200) {
+      const singleNewlineParagraphs = englishText.split(/\n+/).filter(p => p.trim().length > 0);
+
+      // If single newline splitting yields significantly more paragraphs, use that
+      if (singleNewlineParagraphs.length > englishParagraphs.length) {
+        console.log('ParagraphMatchingAgent: Detected potential layout issue (single newlines). Using single newline fallback.');
+        englishParagraphs = singleNewlineParagraphs;
+      }
+    }
+
     if (englishParagraphs.length === 0) {
       throw new Error('No paragraphs found in English text');
     }
 
     // Create prompt for matching
     const prompt = this.createMatchingPrompt(koreanText, englishParagraphs);
-    
+
     try {
       console.log('Invoking paragraph matching model...');
       const response = await this.model.invoke(prompt);
       console.log('Model response received');
       const result = this.parseMatchingResult(response.content as string, englishParagraphs);
-      
+
       return result;
     } catch (error) {
       console.error('Error matching paragraphs:', error);
@@ -92,7 +105,7 @@ Return ONLY the JSON object, no other text.`;
   }
 
   private parseMatchingResult(
-    content: string, 
+    content: string,
     englishParagraphs: string[]
   ): ParagraphMatchResult {
     try {
@@ -103,7 +116,7 @@ Return ONLY the JSON object, no other text.`;
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      
+
       if (!parsed.paragraphs || !Array.isArray(parsed.paragraphs)) {
         throw new Error('Invalid response format: missing paragraphs array');
       }
@@ -115,7 +128,7 @@ Return ONLY the JSON object, no other text.`;
         console.warn(
           `Paragraph count mismatch: English=${englishParagraphs.length}, Korean=${koreanParagraphs.length}`
         );
-        
+
         // Try to adjust if close
         if (koreanParagraphs.length < englishParagraphs.length) {
           // Pad with empty paragraphs

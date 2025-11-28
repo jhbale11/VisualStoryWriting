@@ -1,4 +1,4 @@
-import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Select, SelectItem, Textarea } from '@nextui-org/react';
+import { Button, Card, CardBody, Divider, Input, Select, SelectItem, Textarea } from '@nextui-org/react';
 import { useState, useEffect } from 'react';
 import { FaPlus, FaTrash } from 'react-icons/fa';
 import { GlossaryCharacter, GlossaryEvent, GlossaryLocation, GlossaryTerm, useGlossaryStore } from '../../model/GlossaryModel';
@@ -12,6 +12,10 @@ interface Props {
 export default function GlossaryEditPanel({ type, item, onClose }: Props) {
   const arcs = useGlossaryStore(state => state.arcs);
   const updateArc = useGlossaryStore(state => state.updateArc);
+
+  const updateCharacterGlobally = useGlossaryStore(state => state.updateCharacterGlobally);
+  const updateLocationGlobally = useGlossaryStore(state => state.updateLocationGlobally);
+  const updateTermGlobally = useGlossaryStore(state => state.updateTermGlobally);
 
   const [editData, setEditData] = useState<any>(item || {});
 
@@ -41,35 +45,26 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
   };
 
   const handleSave = () => {
-    const arc = findArcContainingItem();
-    if (!arc) {
-      console.error('Arc not found for item:', item.id);
-      return;
-    }
-
     // Ensure id is preserved
     const dataToSave = { ...editData, id: item.id };
-    
+
     if (type === 'character') {
-      const updatedCharacters = (arc.characters || []).map(c => 
-        c.id === item.id ? dataToSave : c
-      );
-      updateArc(arc.id, { characters: updatedCharacters });
+      updateCharacterGlobally(dataToSave);
+    } else if (type === 'location') {
+      updateLocationGlobally(dataToSave);
+    } else if (type === 'term') {
+      updateTermGlobally(dataToSave);
     } else if (type === 'event') {
-      const updatedEvents = (arc.events || []).map(e => 
+      // Events are still arc-specific
+      const arc = findArcContainingItem();
+      if (!arc) {
+        console.error('Arc not found for item:', item.id);
+        return;
+      }
+      const updatedEvents = (arc.events || []).map(e =>
         e.id === item.id ? dataToSave : e
       );
       updateArc(arc.id, { events: updatedEvents });
-    } else if (type === 'location') {
-      const updatedLocations = (arc.locations || []).map(l => 
-        l.id === item.id ? dataToSave : l
-      );
-      updateArc(arc.id, { locations: updatedLocations });
-    } else if (type === 'term') {
-      const updatedTerms = (arc.terms || []).map(t => 
-        t.id === item.id ? dataToSave : t
-      );
-      updateArc(arc.id, { terms: updatedTerms });
     }
     onClose();
   };
@@ -81,6 +76,15 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
         console.error('Arc not found for item:', item.id);
         return;
       }
+
+      // For delete, we still need to find the specific arc(s) or implement a global delete
+      // For now, let's keep delete local to the found arc to avoid accidental mass deletion
+      // OR we could implement deleteCharacterGlobally later. 
+      // Given the requirement is about "editing", let's stick to local delete for safety 
+      // unless the user specifically asked for global delete. 
+      // Actually, if we sync attributes, we probably want to delete globally too?
+      // But a character might be removed from one arc but stay in others.
+      // So local delete is SAFER and more correct for "removing from this arc".
 
       if (type === 'character') {
         const updatedCharacters = (arc.characters || []).filter(c => c.id !== item.id);
@@ -180,7 +184,7 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                   onChange={(e) => setEditData({ ...editData, english_name: e.target.value })}
                 />
               </div>
-              
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <Input
                   label="Korean Surname (성)"
@@ -193,7 +197,7 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                   onChange={(e) => setEditData({ ...editData, korean_given_name: e.target.value })}
                 />
               </div>
-              
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <Input
                   label="Surname (Family Name)"
@@ -206,7 +210,7 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                   onChange={(e) => setEditData({ ...editData, given_name: e.target.value })}
                 />
               </div>
-              
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                 <Input
                   label="Emoji"
@@ -228,7 +232,7 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                   <SelectItem key="other" value="other">Other</SelectItem>
                 </Select>
               </div>
-              
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <Select
                   label="Role"
@@ -253,28 +257,28 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                   <SelectItem key="elderly" value="elderly">Elderly</SelectItem>
                 </Select>
               </div>
-              
+
               <Input
                 label="Occupation"
                 value={editData.occupation || ''}
                 onChange={(e) => setEditData({ ...editData, occupation: e.target.value })}
                 placeholder="e.g., Executive Director, Secretary, A-rank Esper"
               />
-              
+
               <Input
                 label="Speech Style (어투)"
                 value={editData.speech_style || ''}
                 onChange={(e) => setEditData({ ...editData, speech_style: e.target.value })}
                 placeholder="e.g., formal (격식체), casual (반말), rough, archaic"
               />
-              
+
               <Input
                 label="First Appearance"
                 value={editData.first_appearance || ''}
                 onChange={(e) => setEditData({ ...editData, first_appearance: e.target.value })}
                 placeholder="e.g., Chapter 1, during school entrance"
               />
-              
+
               <Textarea
                 label="Physical Appearance"
                 value={editData.physical_appearance || ''}
@@ -288,6 +292,13 @@ export default function GlossaryEditPanel({ type, item, onClose }: Props) {
                 onChange={(e) => setEditData({ ...editData, personality: e.target.value })}
                 minRows={3}
                 placeholder="Personality description"
+              />
+              <Textarea
+                label="Translation Notes / Charm Points"
+                value={editData.translation_notes || ''}
+                onChange={(e) => setEditData({ ...editData, translation_notes: e.target.value })}
+                minRows={3}
+                placeholder="Nuances, gap moe, specific vibes to preserve"
               />
             </>
           )}

@@ -24,45 +24,45 @@ const statusLabels: Record<string, string> = {
 };
 
 interface ProjectListProps {
-  filterType?: 'glossary' | 'translation';
+  filterType?: 'glossary' | 'translation' | 'publish';
 }
 
 export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
-  const { 
-    projects, 
+  const {
+    projects,
     archivedProjects,
     showArchived,
     toggleShowArchived,
     loadArchivedProjects,
     archiveCompletedProjects,
     restoreProject,
-    selectProject, 
+    selectProject,
     deleteProject,
-    exportProject 
+    exportProject
   } = useTranslationStore();
-  
+
   // Load archived projects on mount if needed
   useEffect(() => {
     if (showArchived && archivedProjects.length === 0) {
       loadArchivedProjects();
     }
   }, [showArchived, archivedProjects.length, loadArchivedProjects]);
-  
+
   // Combine active and archived projects if showing archived
-  const allProjects = showArchived 
+  const allProjects = showArchived
     ? [...projects, ...archivedProjects]
     : projects;
-  
+
   // Filter projects by type if specified
-  const filteredProjects = filterType 
+  const filteredProjects = filterType
     ? allProjects.filter(p => p.type === filterType)
     : allProjects;
-  
+
   // Separate active and archived for display
-  const activeFilteredProjects = filteredProjects.filter(p => 
+  const activeFilteredProjects = filteredProjects.filter(p =>
     projects.some(ap => ap.id === p.id)
   );
-  const archivedFilteredProjects = filteredProjects.filter(p => 
+  const archivedFilteredProjects = filteredProjects.filter(p =>
     archivedProjects.some(ap => ap.id === p.id)
   );
 
@@ -72,15 +72,15 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
   };
 
   const handleDelete = async (projectId: string) => {
-    const project = projects.find(p => p.id === projectId) || 
-                    archivedProjects.find(p => p.id === projectId);
+    const project = projects.find(p => p.id === projectId) ||
+      archivedProjects.find(p => p.id === projectId);
     const projectName = project?.name || projectId;
-    
+
     if (confirm(`Are you sure you want to delete "${projectName}"?\n\nThis will remove the project from both IndexedDB and LocalStorage.`)) {
       try {
         console.log(`[ProjectList] Deleting project: ${projectName} (${projectId})`);
         deleteProject(projectId);
-        
+
         // Give a small delay to ensure deletion completes
         setTimeout(() => {
           console.log(`[ProjectList] Project ${projectName} deleted successfully`);
@@ -91,19 +91,19 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
       }
     }
   };
-  
+
   const handleArchive = () => {
     if (confirm('Archive all completed projects? This will move them to database storage.')) {
       archiveCompletedProjects();
     }
   };
-  
+
   const handleRestore = (projectId: string) => {
     if (confirm('Restore this project to active projects?')) {
       restoreProject(projectId);
     }
   };
-  
+
   const handleExport = async (projectId: string, projectName: string) => {
     try {
       await exportProject(projectId);
@@ -205,16 +205,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
               let charactersCount = 0;
               let eventsCount = 0;
               let termsCount = 0;
-              
+
               if (project.glossary.arcs && Array.isArray(project.glossary.arcs)) {
                 // New arc-based format
                 arcsCount = project.glossary.arcs.length;
-                
+
                 // Extract unique characters across all arcs
                 const uniqueCharIds = new Set<string>();
                 const uniqueEventIds = new Set<string>();
                 const uniqueTermIds = new Set<string>();
-                
+
                 project.glossary.arcs.forEach((arc: any) => {
                   (arc.characters || []).forEach((char: any) => {
                     uniqueCharIds.add(char.id || char.name);
@@ -226,7 +226,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
                     uniqueTermIds.add(term.id || term.original);
                   });
                 });
-                
+
                 charactersCount = uniqueCharIds.size;
                 eventsCount = uniqueEventIds.size;
                 termsCount = uniqueTermIds.size;
@@ -235,7 +235,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
                 charactersCount = Object.keys(project.glossary.characters || {}).length;
                 termsCount = Object.keys(project.glossary.terms || {}).length;
               }
-              
+
               return (
                 <div className="space-y-1 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                   {arcsCount > 0 && (
@@ -276,8 +276,8 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
       </CardFooter>
     </Card>
   );
-  
-  const hasCompletedProjects = projects.some(p => 
+
+  const hasCompletedProjects = projects.some(p =>
     ['glossary_completed', 'translation_completed', 'review_completed'].includes(p.status)
   );
 
@@ -293,7 +293,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
           >
             Show Archived ({archivedProjects.length})
           </Switch>
-          
+
           {hasCompletedProjects && (
             <Button
               size="sm"
@@ -306,13 +306,13 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
             </Button>
           )}
         </div>
-        
+
         <div className="text-sm text-gray-600 dark:text-gray-400">
           {activeFilteredProjects.length} active
           {showArchived && ` • ${archivedFilteredProjects.length} archived`}
         </div>
       </div>
-      
+
       {/* Active Projects */}
       {activeFilteredProjects.length > 0 && (
         <div>
@@ -322,7 +322,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
           </div>
         </div>
       )}
-      
+
       {/* Archived Projects */}
       {showArchived && archivedFilteredProjects.length > 0 && (
         <div>
@@ -336,7 +336,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({ filterType }) => {
           </div>
         </div>
       )}
-      
+
       {/* Empty State */}
       {activeFilteredProjects.length === 0 && archivedFilteredProjects.length === 0 && (
         <div className="text-center py-12">

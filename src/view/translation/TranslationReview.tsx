@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import type { TranslationProject, ParagraphMatchResult } from '../../translation/types';
 import TranslationReviewInterface from '../textoshopReview/TranslationReviewInterface';
-import { Button } from '@nextui-org/react';
+import { Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from '@nextui-org/react';
 import { FiX, FiDownload, FiGitMerge } from 'react-icons/fi';
 import { ParagraphMatchingAgent } from '../../translation/agents/ParagraphMatchingAgent';
+import { LayoutAgent } from '../../translation/agents/LayoutAgent';
+import { LLMClientFactory } from '../../translation/llm/clients';
 import { taskRunner } from '../../translation/services/TaskRunner';
 
 interface TranslationReviewProps {
@@ -19,10 +21,14 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
   const [isMatching, setIsMatching] = useState(false);
   const [retranslateTaskId, setRetranslateTaskId] = useState<string | null>(null);
 
+  // Download State
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [downloadFilename, setDownloadFilename] = useState(`${project.name}_reviewed_translation.txt`);
+
   const currentChunk = project.chunks[currentChunkIndex];
   const retranslateTask = retranslateTaskId ? tasks[retranslateTaskId] : undefined;
   const isRetranslating = retranslateTask?.status === 'running';
-  
+
   // Monitor retranslate task completion
   useEffect(() => {
     if (retranslateTask && retranslateTask.status === 'completed') {
@@ -34,7 +40,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
       alert(`Retranslation failed: ${retranslateTask.error || 'Unknown error'}`);
     }
   }, [retranslateTask]);
-  
+
   if (!currentChunk) {
     return <div>No chunk found</div>;
   }
@@ -57,7 +63,18 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     }
   };
 
-  const handleDownloadAll = () => {
+  const handleDownloadAllClick = () => {
+    // Check if there's content to download
+    const hasContent = project.chunks.some(chunk => chunk.translations.final && chunk.translations.final.trim().length > 0);
+    if (!hasContent) {
+      alert('No translations to download yet.');
+      return;
+    }
+    setDownloadFilename(`${project.name}_reviewed_translation.txt`);
+    setIsDownloadModalOpen(true);
+  };
+
+  const handleDownloadAllConfirm = () => {
     // Collect all final translations
     const allTranslations = project.chunks
       .map((chunk) => {
@@ -72,38 +89,66 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${project.name}_reviewed_translation.txt`;
+    a.download = downloadFilename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    setIsDownloadModalOpen(false);
   };
 
   const handleRunParagraphMatching = async () => {
     setIsMatching(true);
 
     try {
-      const matchingAgent = new ParagraphMatchingAgent();
-      const koreanText = currentChunk.text;
       const englishText = currentChunk.translations.final || '';
 
       if (!englishText) {
         throw new Error('No English translation found for this chunk');
       }
 
+      // 1. Run Layout Agent first to ensure correct formatting (double newlines)
+      console.log('Running Layout Agent...');
+      let formattedEnglish = englishText;
+
+      try {
+        // Use project's layout config or default to Gemini
+        const layoutConfig = project.agent_configs.layout || {
+          provider: 'gemini',
+          model: 'gemini-2.5-pro',
+          temperature: 0.3
+        };
+
+        const client = LLMClientFactory.createClient(layoutConfig);
+        const layoutAgent = new LayoutAgent(client, project.language);
+
+        formattedEnglish = await layoutAgent.format(englishText);
+        console.log('Layout formatting completed');
+      } catch (layoutError) {
+        console.error('Layout Agent failed, proceeding with original text:', layoutError);
+        // We continue with original text if layout fails, but warn the user
+        console.warn('Proceeding with paragraph matching using unformatted text due to layout failure');
+      }
+
+      // 2. Run Paragraph Matching with the formatted text
+      console.log('Running Paragraph Matching...');
+      const matchingAgent = new ParagraphMatchingAgent();
+      const koreanText = currentChunk.text;
+
       const matchResult: ParagraphMatchResult = await matchingAgent.matchParagraphs(
         koreanText,
-        englishText
+        formattedEnglish
       );
 
       // Reconstruct Korean text with the same paragraph breaks as English
       const reconstructedKoreanText = matchResult.koreanParagraphs.join('\n\n');
 
-      // Save the match result and update the Korean text
+      // Save the match result AND the formatted English text
       updateChunk(project.id, currentChunk.id, {
         text: reconstructedKoreanText, // Update Korean text with new paragraph breaks
         translations: {
           ...currentChunk.translations,
+          final: formattedEnglish, // Update English text with layout formatting
           paragraphMatches: matchResult,
         },
       });
@@ -135,7 +180,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     });
 
     setRetranslateTaskId(taskId);
-    
+
     // Run the task
     taskRunner.runTask(taskId).catch(error => {
       console.error('Error running retranslate task:', error);
@@ -163,7 +208,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
             color="secondary"
             variant="flat"
             startContent={<FiDownload />}
-            onPress={handleDownloadAll}
+            onPress={handleDownloadAllClick}
           >
             Download All
           </Button>
@@ -177,22 +222,53 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
           </Button>
         </div>
       )}
-      
-    <TranslationReviewInterface
-      projectId={project.id}
-      chunkId={currentChunk.id}
-      koreanText={currentChunk.text}
-      englishText={currentChunk.translations.final || ''}
-      paragraphMatches={currentChunk.translations.paragraphMatches}
-      onSave={handleSave}
-      onNavigate={handleNavigate}
-      onRetranslate={handleRetranslate}
-      isRetranslating={isRetranslating}
-      canNavigatePrev={currentChunkIndex > 0}
-      canNavigateNext={currentChunkIndex < project.chunks.length - 1}
-      chunkIndex={currentChunkIndex}
-      totalChunks={project.chunks.length}
-    />
+
+      <TranslationReviewInterface
+        projectId={project.id}
+        chunkId={currentChunk.id}
+        koreanText={currentChunk.text}
+        englishText={currentChunk.translations.final || ''}
+        paragraphMatches={currentChunk.translations.paragraphMatches}
+        onSave={handleSave}
+        onNavigate={handleNavigate}
+        onRetranslate={handleRetranslate}
+        isRetranslating={isRetranslating}
+        canNavigatePrev={currentChunkIndex > 0}
+        canNavigateNext={currentChunkIndex < project.chunks.length - 1}
+        chunkIndex={currentChunkIndex}
+        totalChunks={project.chunks.length}
+      />
+
+      {/* Download Filename Modal */}
+      <Modal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        classNames={{
+          wrapper: "z-[99999]",
+          backdrop: "z-[99998]"
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>Download All Translations</ModalHeader>
+          <ModalBody>
+            <Input
+              label="Filename"
+              value={downloadFilename}
+              onValueChange={setDownloadFilename}
+              placeholder="Enter filename"
+              autoFocus
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setIsDownloadModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" onPress={handleDownloadAllConfirm}>
+              Download
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 };

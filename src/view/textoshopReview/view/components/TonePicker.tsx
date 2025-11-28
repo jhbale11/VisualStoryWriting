@@ -6,6 +6,7 @@ import { TextToneChanger } from "../../model/tools/promptTools/TextToneChanger";
 import { useUndoModelStore } from "../../model/UndoModel";
 import { useStudyStore } from "../../model/StudyStub";
 import { MdAdd, MdClose, MdEdit, MdCheck } from "react-icons/md";
+import { IoIosArrowDown } from "react-icons/io";
 
 export function TonePicker() {
   const tone = useModelStore(state => state.tone);
@@ -15,7 +16,7 @@ export function TonePicker() {
   const removeSavedTone = useModelStore(state => state.removeSavedTone);
   const updateSavedToneName = useModelStore(state => state.updateSavedToneName);
   const loadSavedTone = useModelStore(state => state.loadSavedTone);
-  
+
   const [newToneName, setNewToneName] = useState("");
   const [editingToneId, setEditingToneId] = useState<string | null>(null);
   const [editingToneName, setEditingToneName] = useState("");
@@ -98,33 +99,33 @@ export function TonePicker() {
   const currentWheelColor = `rgb(${tone[0].value / nToneValues * 255}, ${tone[1].value / nToneValues * 255}, ${tone[2].value / nToneValues * 255})`;
 
   // Calculate guides to help user decide in which direction to move the cursor
-  const guides : any[] = [];
+  const guides: any[] = [];
   tone.forEach((toneSpace, i) => {
     const direction = toneSpace.value > 5 ? -1 : 1; // Go in the direction that has the most space available
     // Calculate the position of the cursor if we were to go in that direction
     const guideValue = Math.min(toneSpace.value + direction * 3, nToneValues);
     const guidePosition = getWheelPositionFromColor(
       (i === 0 ? guideValue : tone[0].value) / nToneValues * 255,
-      (i === 1 ? guideValue : tone[1].value) / nToneValues * 255, 
+      (i === 1 ? guideValue : tone[1].value) / nToneValues * 255,
       (i === 2 ? guideValue : tone[2].value) / nToneValues * 255,
-       wheelSize, wheelSize);
-    
+      wheelSize, wheelSize);
+
     // Make sure the guide does not go out of bounds
     const distance = Math.sqrt((guidePosition[0] - currentWheelPosition[0]) ** 2 + (guidePosition[1] - currentWheelPosition[1]) ** 2);
     if (distance < wheelSize / 2) {
       const isLeftSide = guidePosition[0] < currentWheelPosition[0];
       const isBottomSide = guidePosition[1] > currentWheelPosition[1];
 
-      guides.push({name: direction === -1 ? toneSpace.lowAdjective : toneSpace.highAdjective, position: guidePosition, textAnchor: isLeftSide ? "end" : "start", dominantBaseline: isBottomSide ? "hanging" : "auto"});
+      guides.push({ name: direction === -1 ? toneSpace.lowAdjective : toneSpace.highAdjective, position: guidePosition, textAnchor: isLeftSide ? "end" : "start", dominantBaseline: isBottomSide ? "hanging" : "auto" });
     }
   });
 
   useEffect(() => {
-    const onMouseUp = (e : MouseEvent) => {
+    const onMouseUp = (e: MouseEvent) => {
       if (e.button === 0 && isDragging) {
         setIsDragging(false);
         changeSelectedTextTone();
-        useStudyStore.getState().logEvent("TONE_CHANGED", {source: 'wheel', tone: useModelStore.getState().tone});
+        useStudyStore.getState().logEvent("TONE_CHANGED", { source: 'wheel', tone: useModelStore.getState().tone });
       }
     }
     window.addEventListener('mouseup', onMouseUp);
@@ -173,17 +174,28 @@ export function TonePicker() {
     setEditingToneName("");
   };
 
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   return (
-    <Card style={{ width: 250, minHeight: 451 }}>
-      <CardHeader>
+    <Card style={{ width: 250, minHeight: isCollapsed ? 'auto' : 451 }}>
+      <CardHeader className="flex justify-between items-center px-4 py-3">
         <span style={{ fontWeight: 600 }}>Tone picker</span>
+        <Button
+          isIconOnly
+          size="sm"
+          variant="light"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          style={{ minWidth: 20, width: 20, height: 20 }}
+        >
+          {isCollapsed ? <IoIosArrowDown style={{ transform: 'rotate(-90deg)' }} /> : <IoIosArrowDown />}
+        </Button>
       </CardHeader>
       <Divider />
-      <CardBody>
+      {!isCollapsed && <CardBody>
         <div style={{ display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 10 }}>
           <div className={"group"} ref={wheelRef} style={{ position: 'relative', width: wheelSize, height: wheelSize }}
-          
-          onMouseDown={(e) => {
+
+            onMouseDown={(e) => {
               if (wheelRef.current && e.button === 0) {
                 setIsDragging(true);
                 updateToneFromMousePosition(e);
@@ -191,14 +203,14 @@ export function TonePicker() {
                 e.stopPropagation();
               }
             }
-          }
+            }
 
-          onMouseMove={(e) => {
+            onMouseMove={(e) => {
               if (isDragging) {
                 updateToneFromMousePosition(e);
               }
             }
-          }
+            }
           >
             <div style={{ position: 'absolute', borderRadius: '50%', transform: 'rotateZ(270deg)', inset: 0, background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)' }}></div>
             <div style={{ position: 'absolute', borderRadius: '50%', transform: 'rotateZ(270deg)', inset: 0, background: 'radial-gradient(circle closest-side, rgb(255, 255, 255), transparent)' }}></div>
@@ -211,10 +223,10 @@ export function TonePicker() {
                 </defs>
                 {
                   guides.map((guide, i) => {
-                    return <g  key={i}>
-                      <line markerEnd="url(#arrow)"x1={currentWheelPosition[0]} y1={currentWheelPosition[1]} x2={guide.position[0]} y2={guide.position[1]} stroke="black" strokeWidth="2" />
-                      <text  x={guide.position[0]} y={guide.position[1]} textAnchor={guide.textAnchor} dominantBaseline={guide.dominantBaseline} fontSize="10" fill="black">{guide.name}</text>
-                    </g> 
+                    return <g key={i}>
+                      <line markerEnd="url(#arrow)" x1={currentWheelPosition[0]} y1={currentWheelPosition[1]} x2={guide.position[0]} y2={guide.position[1]} stroke="black" strokeWidth="2" />
+                      <text x={guide.position[0]} y={guide.position[1]} textAnchor={guide.textAnchor} dominantBaseline={guide.dominantBaseline} fontSize="10" fill="black">{guide.name}</text>
+                    </g>
                   })
                 }
               </svg>
@@ -227,12 +239,12 @@ export function TonePicker() {
             <div style={{ display: 'flex', flexDirection: 'row', textAlign: 'right', justifyContent: 'space-between', gap: 30 }}>
               <Input size="sm" value={t.lowAdjective} onValueChange={(e) => {
                 tone[i].lowAdjective = e;
-                useStudyStore.getState().logEvent("TONE_NAMES_CHANGED", {tone: tone});
+                useStudyStore.getState().logEvent("TONE_NAMES_CHANGED", { tone: tone });
                 setTone([...tone]);
               }}></Input>
               <Input style={{ textAlign: 'right' }} size="sm" value={t.highAdjective} onValueChange={(e) => {
                 tone[i].highAdjective = e;
-                useStudyStore.getState().logEvent("TONE_NAMES_CHANGED", {tone: tone});
+                useStudyStore.getState().logEvent("TONE_NAMES_CHANGED", { tone: tone });
                 setTone([...tone]);
               }}></Input>
 
@@ -240,7 +252,7 @@ export function TonePicker() {
             <Slider aria-label={t.highAdjective} showSteps color={['danger', 'success', 'primary'][i] as any} size='md' minValue={0} maxValue={10} step={1} value={t.value} /*label={t.lowAdjective} */
               onChange={(e) => { tone[i].value = e as number; setTone([...tone]) }}
               onChangeEnd={(e) => {
-                useStudyStore.getState().logEvent("TONE_CHANGED", {source: 'slider', tone: tone});
+                useStudyStore.getState().logEvent("TONE_CHANGED", { source: 'slider', tone: tone });
                 changeSelectedTextTone();
               }
               }
@@ -252,17 +264,17 @@ export function TonePicker() {
             ></Slider>
           </div>
           )}
-          
+
           {/* Saved Tones Section */}
           <Divider style={{ marginTop: 10, marginBottom: 10 }} />
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: '#666', marginBottom: 4 }}>Saved Tones</div>
-            
+
             {/* Add new tone */}
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-              <Input 
-                size="sm" 
-                placeholder="Name..." 
+              <Input
+                size="sm"
+                placeholder="Name..."
                 value={newToneName}
                 onValueChange={setNewToneName}
                 onKeyDown={(e) => {
@@ -272,10 +284,10 @@ export function TonePicker() {
                 }}
                 style={{ flex: 1 }}
               />
-              <Button 
-                size="sm" 
-                isIconOnly 
-                color="primary" 
+              <Button
+                size="sm"
+                isIconOnly
+                color="primary"
                 variant="flat"
                 onClick={handleAddTone}
                 isDisabled={!newToneName.trim()}
@@ -283,15 +295,15 @@ export function TonePicker() {
                 <MdAdd />
               </Button>
             </div>
-            
+
             {/* List of saved tones */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
               {savedTones.map((savedTone) => (
-                <div 
-                  key={savedTone.id} 
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
+                <div
+                  key={savedTone.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
                     gap: 6,
                     padding: '6px 8px',
                     borderRadius: 6,
@@ -307,21 +319,21 @@ export function TonePicker() {
                   }}
                 >
                   {/* Color indicator */}
-                  <div 
-                    style={{ 
-                      width: 16, 
-                      height: 16, 
-                      borderRadius: 4, 
+                  <div
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 4,
                       background: savedTone.color,
                       border: '1px solid rgba(0,0,0,0.1)',
                       flexShrink: 0
                     }}
                   />
-                  
+
                   {/* Name (editable or display) */}
                   {editingToneId === savedTone.id ? (
-                    <Input 
-                      size="sm" 
+                    <Input
+                      size="sm"
                       value={editingToneName}
                       onValueChange={setEditingToneName}
                       onKeyDown={(e) => {
@@ -339,14 +351,14 @@ export function TonePicker() {
                       {savedTone.name}
                     </span>
                   )}
-                  
+
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 2 }}>
                     {editingToneId === savedTone.id ? (
                       <>
-                        <Button 
-                          size="sm" 
-                          isIconOnly 
+                        <Button
+                          size="sm"
+                          isIconOnly
                           variant="light"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -356,9 +368,9 @@ export function TonePicker() {
                         >
                           <MdCheck size={16} />
                         </Button>
-                        <Button 
-                          size="sm" 
-                          isIconOnly 
+                        <Button
+                          size="sm"
+                          isIconOnly
                           variant="light"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -371,9 +383,9 @@ export function TonePicker() {
                       </>
                     ) : (
                       <>
-                        <Button 
-                          size="sm" 
-                          isIconOnly 
+                        <Button
+                          size="sm"
+                          isIconOnly
                           variant="light"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -383,9 +395,9 @@ export function TonePicker() {
                         >
                           <MdEdit size={14} />
                         </Button>
-                        <Button 
-                          size="sm" 
-                          isIconOnly 
+                        <Button
+                          size="sm"
+                          isIconOnly
                           variant="light"
                           color="danger"
                           onClick={(e) => {
@@ -404,7 +416,7 @@ export function TonePicker() {
             </div>
           </div>
         </div>
-      </CardBody>
+      </CardBody>}
     </Card>
   )
 }

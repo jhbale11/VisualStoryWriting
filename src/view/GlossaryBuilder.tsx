@@ -6,7 +6,7 @@ import { FaLocationDot } from 'react-icons/fa6';
 import { FiFeather, FiTrash } from 'react-icons/fi';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
 import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
-import { GlossaryCharacter, GlossaryTerm, useGlossaryStore } from '../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryTerm, useGlossaryStore, generateGlossaryString } from '../model/GlossaryModel';
 import { LayoutUtils } from '../model/LayoutUtils';
 import { useModelStore } from '../model/Model';
 import GlossaryEditPanel from './glossary/GlossaryEditPanel';
@@ -19,7 +19,7 @@ function StoryFeaturesTab() {
   const styleGuide = useGlossaryStore((state) => state.style_guide);
   const honorifics = useGlossaryStore((state) => state.honorifics);
   const recurringPhrases = useGlossaryStore((state) => state.recurring_phrases);
-  
+
   const updateStorySummary = useGlossaryStore((state) => state.updateStorySummary);
   const updateStyleGuide = useGlossaryStore((state) => state.updateStyleGuide);
   const addArc = useGlossaryStore((state) => state.addArc);
@@ -86,11 +86,11 @@ function StoryFeaturesTab() {
                   <CardBody>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flex: 1 }}>
-                        <div style={{ 
-                          minWidth: '32px', 
-                          height: '32px', 
-                          borderRadius: '50%', 
-                          background: '#667eea', 
+                        <div style={{
+                          minWidth: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          background: '#667eea',
                           color: 'white',
                           display: 'flex',
                           alignItems: 'center',
@@ -687,9 +687,15 @@ export default function GlossaryBuilder() {
   const { isOpen: isExportOpen, onOpen: onExportOpen, onClose: onExportClose } = useDisclosure();
   const { isOpen: isImportOpen, onOpen: onImportOpen, onClose: onImportClose } = useDisclosure();
   const [jsonData, setJsonData] = useState('');
+  const [compactData, setCompactData] = useState('');
+  const [exportTab, setExportTab] = useState<'json' | 'compact'>('compact');
   const [topHeight, setTopHeight] = useState(70);
   const [isDragging, setIsDragging] = useState(false);
-  
+
+  // Download State
+  const { isOpen: isDownloadModalOpen, onOpen: onDownloadModalOpen, onClose: onDownloadModalClose } = useDisclosure();
+  const [downloadFilename, setDownloadFilename] = useState('glossary_compact.txt');
+
   const visualPanelRef = React.createRef<HTMLDivElement>();
 
   const glossaryArcs = useGlossaryStore(state => state.arcs);
@@ -703,11 +709,11 @@ export default function GlossaryBuilder() {
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
   const updateArc = useGlossaryStore(state => state.updateArc);
-  
+
   // Extract all data from arcs - merge character info from all appearances
   const glossaryCharacters = React.useMemo(() => {
     const characterMap = new Map<string, GlossaryCharacter>();
-    
+
     console.log(`🔍 Processing ${glossaryArcs.length} arcs for characters...`);
     glossaryArcs.forEach((arc, idx) => {
       console.log(`   Arc ${idx}: ${arc.name} - ${arc.characters?.length || 0} characters`);
@@ -716,12 +722,12 @@ export default function GlossaryBuilder() {
           console.warn(`     ⚠️ Character without name in arc ${arc.name}`);
           return;
         }
-        
+
         // Use name (+ korean_name if available) as unique key
         const englishName = char.name.toLowerCase().trim();
         const koreanName = (char.korean_name || '').toLowerCase().trim();
         const uniqueKey = koreanName ? `${englishName}|${koreanName}` : englishName;
-        
+
         const existing = characterMap.get(uniqueKey);
         if (existing) {
           // Merge: take the most complete information
@@ -743,8 +749,8 @@ export default function GlossaryBuilder() {
             occupation: char.occupation || existing.occupation,
             // Keep most important role
             role: (char.role === 'protagonist' || existing.role === 'protagonist') ? 'protagonist' :
-                  (char.role === 'antagonist' || existing.role === 'antagonist') ? 'antagonist' :
-                  (char.role === 'major' || existing.role === 'major') ? 'major' :
+              (char.role === 'antagonist' || existing.role === 'antagonist') ? 'antagonist' :
+                (char.role === 'major' || existing.role === 'major') ? 'major' :
                   (existing.role || char.role),
           });
         } else {
@@ -753,7 +759,7 @@ export default function GlossaryBuilder() {
         }
       });
     });
-    
+
     const chars = Array.from(characterMap.values());
     console.log(`📊 Extracted ${chars.length} unique characters from ${glossaryArcs.length} arcs`);
     chars.forEach((c, i) => {
@@ -768,7 +774,7 @@ export default function GlossaryBuilder() {
   const glossaryTerms = React.useMemo(() => {
     const terms: GlossaryTerm[] = [];
     const seenIds = new Set<string>();
-    
+
     glossaryArcs.forEach(arc => {
       (arc.terms || []).forEach(term => {
         // Ensure term has an id and valid category
@@ -780,7 +786,7 @@ export default function GlossaryBuilder() {
           context: term.context,
           category: category || 'other',
         };
-        
+
         if (!seenIds.has(termWithId.id)) {
           terms.push(termWithId);
           seenIds.add(termWithId.id);
@@ -789,13 +795,13 @@ export default function GlossaryBuilder() {
     });
     return terms;
   }, [glossaryArcs]);
-  
+
   // Filter characters and events by arc
   const filteredCharacters = selectedArcFilter
     ? (() => {
-        const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
-        return arc ? (arc.characters || []) : [];
-      })()
+      const arc = glossaryArcs.find(a => a.id === selectedArcFilter);
+      return arc ? (arc.characters || []) : [];
+    })()
     : glossaryCharacters;
 
   // filteredEvents removed - Events tab not used
@@ -826,7 +832,7 @@ export default function GlossaryBuilder() {
 
     const previousProjectId = previousProjectIdRef.current;
     const isProjectChanged = previousProjectId !== currentProjectId;
-    
+
     console.log(`🔄 Loading project: ${currentProjectId}`, {
       previousProject: previousProjectId,
       isProjectChanged,
@@ -835,14 +841,14 @@ export default function GlossaryBuilder() {
     // Only reset if project actually changed (not on initial load or same project)
     if (isProjectChanged && previousProjectId !== null) {
       console.log('🧹 Resetting glossary store (project changed)...');
-      
+
       // Save current project before switching
       try {
         if (previousProjectId) {
           const raw = localStorage.getItem('vsw.projects') || '[]';
           const arr = JSON.parse(raw);
           const prevProjectIndex = arr.findIndex((p: any) => p.id === previousProjectId);
-          
+
           if (prevProjectIndex >= 0) {
             const glossaryState = useGlossaryStore.getState();
             const glossarySnapshot = {
@@ -854,7 +860,7 @@ export default function GlossaryBuilder() {
               style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
               target_language: glossaryState.target_language,
             };
-            
+
             arr[prevProjectIndex] = {
               ...arr[prevProjectIndex],
               updatedAt: Date.now(),
@@ -904,27 +910,27 @@ export default function GlossaryBuilder() {
       const raw = localStorage.getItem('vsw.projects') || '[]';
       const arr = JSON.parse(raw);
       const project = arr.find((p: any) => p.id === currentProjectId);
-      
+
       if (project && project.glossary) {
         const glossaryData = project.glossary;
         const incomingArcsCount = (glossaryData.arcs || []).length;
-        
+
         // Check if we should load (don't overwrite if we have current data and this is not a project change)
         const currentState = useGlossaryStore.getState();
         const hasCurrentData = currentState.arcs.length > 0;
-        
+
         if (!isProjectChanged && hasCurrentData && !currentState.isLoading) {
           console.log(`⏭️ Skipping load: same project with existing data (${currentState.arcs.length} arcs)`);
           previousProjectIdRef.current = currentProjectId;
           return;
         }
-        
+
         console.log(`📖 Loading project glossary for ${currentProjectId}:`, {
           incomingArcs: incomingArcsCount,
         });
-        
+
         const loadedArcs = JSON.parse(JSON.stringify(glossaryData.arcs || []));
-        
+
         // Count characters/events/terms for logging
         let totalChars = 0;
         let totalEvents = 0;
@@ -934,7 +940,7 @@ export default function GlossaryBuilder() {
           totalEvents += (arc.events || []).length;
           totalTerms += (arc.terms || []).length;
         });
-        
+
         useGlossaryStore.setState({
           arcs: loadedArcs,
           fullText: glossaryData.fullText || '',
@@ -962,7 +968,7 @@ export default function GlossaryBuilder() {
           })),
           target_language: glossaryData.target_language || 'en',
         });
-        
+
         console.log(`✅ Loaded project: ${currentProjectId}`);
         console.log(`📊 Loaded glossary: ${incomingArcsCount} arcs, ${totalChars} characters (total in arcs), ${totalEvents} events, ${totalTerms} terms`);
       } else {
@@ -986,9 +992,9 @@ export default function GlossaryBuilder() {
 
   useEffect(() => {
     if (glossaryCharacters.length > 0 &&
-        useModelStore.getState().entityNodes.length === 0 &&
-        useModelStore.getState().actionEdges.length === 0 &&
-        useModelStore.getState().locationNodes.length === 0) {
+      useModelStore.getState().entityNodes.length === 0 &&
+      useModelStore.getState().actionEdges.length === 0 &&
+      useModelStore.getState().locationNodes.length === 0) {
       const { entityNodes, actionEdges, locationNodes } = convertToModelFormat();
       setEntityNodes(entityNodes);
       setActionEdges(actionEdges);
@@ -1020,26 +1026,26 @@ export default function GlossaryBuilder() {
         const raw = localStorage.getItem('vsw.projects') || '[]';
         const arr = JSON.parse(raw);
         const projectIndex = arr.findIndex((p: any) => p.id === currentProjectId);
-        
+
         if (projectIndex >= 0) {
           const glossaryState = useGlossaryStore.getState();
-          
+
           // Don't save if currently loading (extraction in progress)
           if (glossaryState.isLoading) {
             console.log('⏸️ Skipping auto-save: extraction in progress');
             return;
           }
-          
+
           // Don't save empty glossary if project previously had data
           const existingProject = arr[projectIndex];
           const existingArcsCount = existingProject.glossary?.arcs?.length || 0;
           const currentArcsCount = glossaryState.arcs.length;
-          
+
           if (currentArcsCount === 0 && existingArcsCount > 0) {
             console.log(`⏸️ Skipping auto-save: would overwrite ${existingArcsCount} arcs with empty data`);
             return;
           }
-          
+
           // Create a deep copy to avoid reference issues
           const glossarySnapshot = {
             arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
@@ -1050,7 +1056,7 @@ export default function GlossaryBuilder() {
             style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
             target_language: glossaryState.target_language,
           };
-          
+
           arr[projectIndex] = {
             ...arr[projectIndex],
             updatedAt: Date.now(),
@@ -1089,17 +1095,41 @@ export default function GlossaryBuilder() {
   const handleExport = () => {
     const json = exportToJSON();
     setJsonData(json);
+
+    // Generate compact string
+    const state = useGlossaryStore.getState();
+    const compact = generateGlossaryString(state);
+    setCompactData(compact);
+
     onExportOpen();
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([jsonData], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'glossary.json';
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleDownloadClick = () => {
+    // Set default filename based on export tab
+    const defaultFilename = exportTab === 'compact' ? 'glossary_compact.txt' : 'glossary.json';
+    setDownloadFilename(defaultFilename);
+    onDownloadModalOpen();
+  };
+
+  const handleDownloadConfirm = () => {
+    if (exportTab === 'compact') {
+      const blob = new Blob([compactData], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFilename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const blob = new Blob([jsonData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadFilename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+    onDownloadModalClose();
   };
 
   const handleImport = () => {
@@ -1151,50 +1181,52 @@ export default function GlossaryBuilder() {
           Glossary Builder
         </h1>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <Button size="sm" variant="bordered" onClick={() => { try {
-            if (!currentProjectId) {
-              console.error('No project ID found');
-              return;
-            }
-            
-            const raw = localStorage.getItem('vsw.projects') || '[]';
-            const arr = JSON.parse(raw);
-            const glossaryState = useGlossaryStore.getState();
-
-            // Create deep copy to avoid reference issues
-            const glossarySnapshot = {
-              arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
-              fullText: glossaryState.fullText,
-              story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
-              honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
-              recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
-              style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
-              target_language: glossaryState.target_language,
-            };
-
-            const snapshot = {
-              id: currentProjectId,
-              name: (arr.find((p: any) => p.id === currentProjectId)?.name) || `Project ${new Date().toLocaleString()}`,
-              updatedAt: Date.now(),
-              glossary: glossarySnapshot,
-              view: {
-                entityNodes: useModelStore.getState().entityNodes,
-                actionEdges: useModelStore.getState().actionEdges,
-                locationNodes: useModelStore.getState().locationNodes,
-                textState: useModelStore.getState().textState,
-                isReadOnly: useModelStore.getState().isReadOnly,
-                relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}')
+          <Button size="sm" variant="bordered" onClick={() => {
+            try {
+              if (!currentProjectId) {
+                console.error('No project ID found');
+                return;
               }
-            } as any;
 
-            let next = arr as any[];
-            const idx = arr.findIndex((p: any) => p.id === snapshot.id);
-            if (idx >= 0) { next[idx] = snapshot; } else { next = [snapshot, ...arr]; }
-            localStorage.setItem('vsw.projects', JSON.stringify(next));
-            console.log(`💾 Manually saved project: ${currentProjectId} (${glossaryState.arcs.length} arcs)`);
-          } catch (error) {
-            console.error('Failed to save project:', error);
-          } }}>Save</Button>
+              const raw = localStorage.getItem('vsw.projects') || '[]';
+              const arr = JSON.parse(raw);
+              const glossaryState = useGlossaryStore.getState();
+
+              // Create deep copy to avoid reference issues
+              const glossarySnapshot = {
+                arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
+                fullText: glossaryState.fullText,
+                story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
+                honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
+                recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
+                style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
+                target_language: glossaryState.target_language,
+              };
+
+              const snapshot = {
+                id: currentProjectId,
+                name: (arr.find((p: any) => p.id === currentProjectId)?.name) || `Project ${new Date().toLocaleString()}`,
+                updatedAt: Date.now(),
+                glossary: glossarySnapshot,
+                view: {
+                  entityNodes: useModelStore.getState().entityNodes,
+                  actionEdges: useModelStore.getState().actionEdges,
+                  locationNodes: useModelStore.getState().locationNodes,
+                  textState: useModelStore.getState().textState,
+                  isReadOnly: useModelStore.getState().isReadOnly,
+                  relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}')
+                }
+              } as any;
+
+              let next = arr as any[];
+              const idx = arr.findIndex((p: any) => p.id === snapshot.id);
+              if (idx >= 0) { next[idx] = snapshot; } else { next = [snapshot, ...arr]; }
+              localStorage.setItem('vsw.projects', JSON.stringify(next));
+              console.log(`💾 Manually saved project: ${currentProjectId} (${glossaryState.arcs.length} arcs)`);
+            } catch (error) {
+              console.error('Failed to save project:', error);
+            }
+          }}>Save</Button>
           <Button size="sm" variant="flat" onClick={() => { window.location.hash = '/'; }}>← Back to Home</Button>
           <Tooltip content="Import JSON">
             <Button size="sm" variant="flat" startContent={<FaUpload />} onClick={onImportOpen}>
@@ -1236,9 +1268,9 @@ export default function GlossaryBuilder() {
               {/* Top: Arc Relationships Graph */}
               <div style={{ width: '100%', height: `${topHeight}%`, background: '#F3F4F6', position: 'relative', display: 'flex', flexDirection: 'column' }} ref={visualPanelRef}>
                 {/* Arc Selection Bar */}
-                <div style={{ 
-                  padding: '12px 16px', 
-                  background: 'white', 
+                <div style={{
+                  padding: '12px 16px',
+                  background: 'white',
                   borderBottom: '2px solid #e5e7eb',
                   display: 'flex',
                   alignItems: 'center',
@@ -1263,15 +1295,15 @@ export default function GlossaryBuilder() {
                     ))}
                   </div>
                 </div>
-                
+
                 {/* Arc Relationships Graph */}
                 <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
                   {selectedArcFilter && (() => {
                     const selectedArc = glossaryArcs.find(a => a.id === selectedArcFilter);
                     return selectedArc ? (
-                      <ArcRelationshipGraph 
-                        arc={selectedArc} 
-                        characters={glossaryCharacters} 
+                      <ArcRelationshipGraph
+                        arc={selectedArc}
+                        characters={glossaryCharacters}
                       />
                     ) : null;
                   })()}
@@ -1288,14 +1320,14 @@ export default function GlossaryBuilder() {
                   )}
                 </div>
               </div>
-              
+
               {/* Resizer */}
               <div
                 onMouseDown={(e) => {
                   e.preventDefault();
                   const startY = e.clientY;
                   const startTopHeight = topHeight;
-                  
+
                   const handleMouseMove = (moveEvent: MouseEvent) => {
                     const container = document.getElementById('visual-container');
                     if (!container) return;
@@ -1305,12 +1337,12 @@ export default function GlossaryBuilder() {
                     const newTopHeight = startTopHeight + deltaPercent;
                     setTopHeight(Math.min(Math.max(newTopHeight, 30), 70));
                   };
-                  
+
                   const handleMouseUp = () => {
                     document.removeEventListener('mousemove', handleMouseMove);
                     document.removeEventListener('mouseup', handleMouseUp);
                   };
-                  
+
                   document.addEventListener('mousemove', handleMouseMove);
                   document.addEventListener('mouseup', handleMouseUp);
                 }}
@@ -1354,9 +1386,9 @@ export default function GlossaryBuilder() {
           {/* Reset Button - Top Right */}
           {glossaryArcs.length > 0 && (
             <>
-              <Button 
-                style={{ position: 'absolute', right: 10, top: 10, fontSize: 18, zIndex: 100 }} 
-                isIconOnly 
+              <Button
+                style={{ position: 'absolute', right: 10, top: 10, fontSize: 18, zIndex: 100 }}
+                isIconOnly
                 onClick={(e) => {
                   LayoutUtils.stopAllSimulations();
                   useModelStore.getState().setActionEdges([]);
@@ -1390,7 +1422,7 @@ export default function GlossaryBuilder() {
               startContent={<FaSearch />}
               size="sm"
             />
-            
+
             {/* Arc Filter */}
             {glossaryArcs.length > 0 && (
               <div style={{ marginTop: '15px' }}>
@@ -1422,7 +1454,7 @@ export default function GlossaryBuilder() {
                 </div>
               </div>
             )}
-            
+
             <div style={{ display: 'flex', gap: '10px', marginTop: '15px', flexWrap: 'wrap' }}>
               <Chip
                 onClick={() => setGlossaryTab('characters')}
@@ -1493,81 +1525,81 @@ export default function GlossaryBuilder() {
                   filteredCharacters
                     .filter(char => char.name.toLowerCase().includes(searchQuery.toLowerCase()))
                     .map((char) => (
-                    <Card
-                      key={char.id}
-                      isPressable
-                      isHoverable
-                      onClick={() => setEditingItem({ type: 'character', item: char })}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <CardHeader>
-                        <div>
-                          <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
-                            {char.emoji} {char.name}
-                          </h3>
-                          {char.korean_name && (
-                            <p style={{ fontSize: '14px', color: '#888', margin: '2px 0 0 0' }}>
-                              {char.korean_name}
-                            </p>
-                          )}
-                          {char.age && (
-                            <p style={{ fontSize: '13px', color: '#667eea', margin: '4px 0 0 0', fontWeight: '500' }}>
-                              연령: {char.age}
-                            </p>
-                          )}
-                        </div>
-                      </CardHeader>
-                      <Divider />
-                      <CardBody>
-                        {char.speech_style && (
-                          <div style={{ marginBottom: '10px', padding: '8px', background: '#f0f9ff', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
-                            <div style={{ fontSize: '11px', color: '#667eea', fontWeight: 'bold', marginBottom: '4px' }}>
-                              💬 말투 특징
-                            </div>
-                            <div style={{ fontSize: '13px', color: '#555' }}>
-                              {char.speech_style}
-                            </div>
-                          </div>
-                        )}
-                        {char.physical_appearance && (
-                          <p style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
-                            <span style={{ fontWeight: 'bold', color: '#888' }}>외형:</span> {char.physical_appearance}
-                          </p>
-                        )}
-                        <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
-                          {char.description}
-                        </p>
-                        {char.name_variants && Object.keys(char.name_variants).length > 0 && (
-                          <div style={{ marginBottom: '10px' }}>
-                            <div style={{ fontSize: '11px', color: '#888', fontWeight: 'bold', marginBottom: '4px' }}>
-                              호칭/별명:
-                            </div>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                              {Object.entries(char.name_variants).map(([key, value], idx) => (
-                                <Chip key={idx} size="sm" variant="bordered" color="primary" style={{ fontSize: '11px' }}>
-                                  {value}
-                                </Chip>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {char.traits && char.traits.length > 0 && (
-                          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                            {char.traits.slice(0, 3).map((trait, idx) => (
-                              <Chip key={idx} size="sm" variant="flat" color="secondary">
-                                {trait}
-                              </Chip>
-                            ))}
-                            {char.traits.length > 3 && (
-                              <Chip size="sm" variant="flat">
-                                +{char.traits.length - 3}
-                              </Chip>
+                      <Card
+                        key={char.id}
+                        isPressable
+                        isHoverable
+                        onClick={() => setEditingItem({ type: 'character', item: char })}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <CardHeader>
+                          <div>
+                            <h3 style={{ fontWeight: 'bold', fontSize: '16px', margin: 0 }}>
+                              {char.emoji} {char.name}
+                            </h3>
+                            {char.korean_name && (
+                              <p style={{ fontSize: '14px', color: '#888', margin: '2px 0 0 0' }}>
+                                {char.korean_name}
+                              </p>
+                            )}
+                            {char.age && (
+                              <p style={{ fontSize: '13px', color: '#667eea', margin: '4px 0 0 0', fontWeight: '500' }}>
+                                연령: {char.age}
+                              </p>
                             )}
                           </div>
-                        )}
-                      </CardBody>
-                    </Card>
-                  ))
+                        </CardHeader>
+                        <Divider />
+                        <CardBody>
+                          {char.speech_style && (
+                            <div style={{ marginBottom: '10px', padding: '8px', background: '#f0f9ff', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                              <div style={{ fontSize: '11px', color: '#667eea', fontWeight: 'bold', marginBottom: '4px' }}>
+                                💬 말투 특징
+                              </div>
+                              <div style={{ fontSize: '13px', color: '#555' }}>
+                                {char.speech_style}
+                              </div>
+                            </div>
+                          )}
+                          {char.physical_appearance && (
+                            <p style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#888' }}>외형:</span> {char.physical_appearance}
+                            </p>
+                          )}
+                          <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
+                            {char.description}
+                          </p>
+                          {char.name_variants && Object.keys(char.name_variants).length > 0 && (
+                            <div style={{ marginBottom: '10px' }}>
+                              <div style={{ fontSize: '11px', color: '#888', fontWeight: 'bold', marginBottom: '4px' }}>
+                                호칭/별명:
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                {Object.entries(char.name_variants).map(([key, value], idx) => (
+                                  <Chip key={idx} size="sm" variant="bordered" color="primary" style={{ fontSize: '11px' }}>
+                                    {value}
+                                  </Chip>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {char.traits && char.traits.length > 0 && (
+                            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                              {char.traits.slice(0, 3).map((trait, idx) => (
+                                <Chip key={idx} size="sm" variant="flat" color="secondary">
+                                  {trait}
+                                </Chip>
+                              ))}
+                              {char.traits.length > 3 && (
+                                <Chip size="sm" variant="flat">
+                                  +{char.traits.length - 3}
+                                </Chip>
+                              )}
+                            </div>
+                          )}
+                        </CardBody>
+                      </Card>
+                    ))
                 )}
               </div>
             )}
@@ -1758,10 +1790,10 @@ export default function GlossaryBuilder() {
                                   const charName = typeof arcChar === 'string' ? arcChar : arcChar.name;
                                   const role = typeof arcChar === 'string' ? '' : (arcChar as any).role || '';
                                   return (
-                                    <Chip 
-                                      key={idx} 
-                                      size="sm" 
-                                      variant="flat" 
+                                    <Chip
+                                      key={idx}
+                                      size="sm"
+                                      variant="flat"
                                       color="secondary"
                                       title={role || undefined}
                                     >
@@ -1772,7 +1804,7 @@ export default function GlossaryBuilder() {
                               </div>
                             </div>
                           )}
-                          
+
                           <div>
                             <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#888', marginBottom: '6px' }}>
                               Relationships ({arc.relationships?.length || 0})
@@ -1890,20 +1922,36 @@ export default function GlossaryBuilder() {
         <ModalContent>
           <ModalHeader>Export Glossary</ModalHeader>
           <ModalBody>
-            <Textarea
-              value={jsonData}
-              readOnly
-              minRows={20}
-              maxRows={30}
-              style={{ fontFamily: 'monospace' }}
-            />
+            <Tabs
+              selectedKey={exportTab}
+              onSelectionChange={(key) => setExportTab(key as 'json' | 'compact')}
+            >
+              <Tab key="compact" title="Compact Format (For LLM)">
+                <Textarea
+                  value={compactData}
+                  readOnly
+                  minRows={20}
+                  maxRows={30}
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Tab>
+              <Tab key="json" title="JSON Data">
+                <Textarea
+                  value={jsonData}
+                  readOnly
+                  minRows={20}
+                  maxRows={30}
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Tab>
+            </Tabs>
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={onExportClose}>
               Close
             </Button>
-            <Button color="secondary" startContent={<FaDownload />} onPress={handleDownload}>
-              Download JSON
+            <Button color="secondary" startContent={<FaDownload />} onPress={handleDownloadClick}>
+              Download
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1928,6 +1976,37 @@ export default function GlossaryBuilder() {
             </Button>
             <Button color="secondary" onPress={handleImport}>
               Import
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Download Filename Modal */}
+      <Modal
+        isOpen={isDownloadModalOpen}
+        onClose={onDownloadModalClose}
+        classNames={{
+          wrapper: "z-[99999]",
+          backdrop: "z-[99998]"
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>Download Glossary</ModalHeader>
+          <ModalBody>
+            <Input
+              label="Filename"
+              value={downloadFilename}
+              onValueChange={setDownloadFilename}
+              placeholder="Enter filename"
+              autoFocus
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={onDownloadModalClose}>
+              Cancel
+            </Button>
+            <Button color="primary" onPress={handleDownloadConfirm}>
+              Download
             </Button>
           </ModalFooter>
         </ModalContent>

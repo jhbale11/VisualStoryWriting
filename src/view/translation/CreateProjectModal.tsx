@@ -18,24 +18,30 @@ import {
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import type { AgentConfigs, LLMConfig } from '../../translation/types';
 import { taskRunner } from '../../translation/services/TaskRunner';
-import { 
-  DEFAULT_TRANSLATION_PROMPT_EN, 
+import {
+  DEFAULT_TRANSLATION_PROMPT_EN,
   DEFAULT_TRANSLATION_PROMPT_JA,
   DEFAULT_ENHANCEMENT_PROMPT,
+  DEFAULT_ENHANCEMENT_PROMPT_JA,
   DEFAULT_PROOFREADER_PROMPT,
-  DEFAULT_LAYOUT_PROMPT
+  DEFAULT_PROOFREADER_PROMPT_JA,
+  DEFAULT_LAYOUT_PROMPT,
+  DEFAULT_LAYOUT_PROMPT_JA,
+  DEFAULT_QUALITY_PROMPT,
+  DEFAULT_QUALITY_PROMPT_JA,
+  DEFAULT_PUBLISH_PROMPT
 } from '../../translation/prompts/defaultPrompts';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultType?: 'translation' | 'glossary';
+  defaultType?: 'translation' | 'glossary' | 'publish';
 }
 
 const defaultAgentConfig: LLMConfig = {
   provider: 'gemini',
   model: 'gemini-3-pro-preview',
-  temperature: 0.3,
+  temperature: 1.0,
 };
 
 // Default prompts for each agent  
@@ -44,13 +50,34 @@ const DEFAULT_PROMPTS = {
   enhancement: DEFAULT_ENHANCEMENT_PROMPT,
   proofreader: DEFAULT_PROOFREADER_PROMPT,
   layout: DEFAULT_LAYOUT_PROMPT,
+  quality: DEFAULT_QUALITY_PROMPT,
+  publish: DEFAULT_PUBLISH_PROMPT,
 };
 
 const DEFAULT_PROMPTS_JA = {
   translation: DEFAULT_TRANSLATION_PROMPT_JA,
-  enhancement: DEFAULT_ENHANCEMENT_PROMPT,
-  proofreader: DEFAULT_PROOFREADER_PROMPT,
-  layout: DEFAULT_LAYOUT_PROMPT,
+  enhancement: DEFAULT_ENHANCEMENT_PROMPT_JA,
+  proofreader: DEFAULT_PROOFREADER_PROMPT_JA,
+  layout: DEFAULT_LAYOUT_PROMPT_JA,
+  quality: DEFAULT_QUALITY_PROMPT_JA,
+};
+
+const PROVIDER_MODELS = {
+  anthropic: [
+    'claude-sonnet-4-5',
+    'claude-opus-4-5',
+    'claude-opus-4-1',
+  ],
+  gemini: [
+    'gemini-3-pro-preview',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+  ],
+  openai: [
+    'gpt-5.1-2025-11-13',
+    'gpt-5-2025-08-07',
+    'gpt-4.1-2025-04-14',
+  ],
 };
 
 // Comment out the old massive inline prompts
@@ -572,37 +599,38 @@ const getDefaultPrompt = (agent: string, language: string) => {
   return prompts[agent as keyof typeof prompts] || '';
 };
 
-export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ 
-  isOpen, 
+export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
+  isOpen,
   onClose,
-  defaultType = 'translation' 
+  defaultType = 'translation'
 }) => {
   const { createProject, createTask } = useTranslationStore();
-  
-  const [projectType, setProjectType] = useState<'translation' | 'glossary'>(defaultType);
+
+  const [projectType, setProjectType] = useState<'translation' | 'glossary' | 'publish'>(defaultType);
   const [name, setName] = useState('');
   const [fileContent, setFileContent] = useState('');
   const [language, setLanguage] = useState<'en' | 'ja'>('ja');
   const [glossaryJson, setGlossaryJson] = useState<string>('');
-  
+
   // Settings
   const [chunkSize, setChunkSize] = useState(8000);
   const [overlap, setOverlap] = useState(0);
   const [maxRetries, setMaxRetries] = useState(2);
   const [enableProofreader, setEnableProofreader] = useState(true);
-  
+
   // Custom prompts for each agent
   const [customPrompts, setCustomPrompts] = useState<{
     translation?: string;
     enhancement?: string;
     proofreader?: string;
     layout?: string;
+    publish?: string;
   }>({});
   const [editingPrompt, setEditingPrompt] = useState<{
-    agent: 'translation' | 'enhancement' | 'proofreader' | 'layout';
+    agent: 'translation' | 'enhancement' | 'proofreader' | 'layout' | 'publish';
     prompt: string;
   } | null>(null);
-  
+
   // Agent configs (glossary is handled separately via JSON upload)
   const [agentConfigs, setAgentConfigs] = useState<AgentConfigs>({
     translation: { ...defaultAgentConfig },
@@ -610,6 +638,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     quality: { ...defaultAgentConfig },
     proofreader: { ...defaultAgentConfig },
     layout: { ...defaultAgentConfig },
+    publish: { ...defaultAgentConfig },
   });
 
   // Update projectType when defaultType changes
@@ -650,19 +679,19 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   const processGlossaryWithTask = () => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    
+
     if (!apiKey) {
       alert('API Key not found. Please add VITE_GEMINI_API_KEY to your .env file.');
       return;
     }
 
     // Generate project ID
-    const vswProjectId = (globalThis.crypto && 'randomUUID' in globalThis.crypto 
-      ? crypto.randomUUID() 
+    const vswProjectId = (globalThis.crypto && 'randomUUID' in globalThis.crypto
+      ? crypto.randomUUID()
       : `p-${Date.now()}`);
-    
+
     const projectName = name.trim() || `Glossary Project ${new Date().toLocaleString()}`;
-    
+
     // Create placeholder project in vsw.projects
     const raw = localStorage.getItem('vsw.projects') || '[]';
     const arr = JSON.parse(raw);
@@ -682,7 +711,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     };
     arr.unshift(placeholderProject);
     localStorage.setItem('vsw.projects', JSON.stringify(arr));
-    
+
     // Create task
     const newTaskId = createTask({
       type: 'glossary_extraction',
@@ -693,7 +722,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         vswProjectId,
       },
     });
-    
+
     // Start task in background
     taskRunner.runTask(newTaskId).catch(error => {
       console.error('Error running glossary extraction:', error);
@@ -721,11 +750,16 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       const reader = new FileReader();
       reader.onload = (event) => {
         const content = event.target?.result as string;
-        try {
-          JSON.parse(content); // Validate JSON
+        if (file.name.endsWith('.json')) {
+          try {
+            JSON.parse(content); // Validate JSON
+            setGlossaryJson(content);
+          } catch (error) {
+            alert('Invalid JSON file. Please upload a valid glossary JSON.');
+          }
+        } else {
+          // Treat as raw text glossary
           setGlossaryJson(content);
-        } catch (error) {
-          alert('Invalid JSON file. Please upload a valid glossary JSON.');
         }
       };
       reader.readAsText(file);
@@ -744,290 +778,312 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   return (
     <>
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose}
-      size="3xl"
-      scrollBehavior="inside"
-    >
-      <ModalContent>
-        <ModalHeader>
-          Create New Project
-        </ModalHeader>
-        <ModalBody>
-          <Tabs 
-            selectedKey={projectType} 
-            onSelectionChange={(key) => {
-              setProjectType(key as any);
-            }}
-          >
-            <Tab key="translation" title="Translation Project">
-              <div className="space-y-4 pt-4">
-                <Input
-                  label="Project Name"
-                  placeholder="My Translation Project"
-                  value={name}
-                  onValueChange={setName}
-                  isRequired
-                />
-
-                <Select
-                  label="Target Language"
-                  selectedKeys={[language]}
-                  onChange={(e) => setLanguage(e.target.value as 'en' | 'ja')}
-                >
-                  <SelectItem key="ja" value="ja">Japanese</SelectItem>
-                  <SelectItem key="en" value="en">English</SelectItem>
-                </Select>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Source Text (Korean)
-                  </label>
-                  <input
-                    type="file"
-                    accept=".txt"
-                    onChange={handleFileUpload}
-                    className="mb-2"
-                  />
-                  <Textarea
-                    placeholder="Paste your Korean text here or upload a file"
-                    value={fileContent}
-                    onValueChange={setFileContent}
-                    minRows={6}
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        size="3xl"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>
+            Create New Project
+          </ModalHeader>
+          <ModalBody>
+            <Tabs
+              selectedKey={projectType}
+              onSelectionChange={(key) => {
+                setProjectType(key as any);
+              }}
+            >
+              <Tab key="translation" title="Translation Project">
+                <div className="space-y-4 pt-4">
+                  <Input
+                    label="Project Name"
+                    placeholder="My Translation Project"
+                    value={name}
+                    onValueChange={setName}
                     isRequired
                   />
-                </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Chunk Size"
-                    type="number"
-                    value={chunkSize.toString()}
-                    onValueChange={(v) => setChunkSize(Number(v))}
-                  />
-                  <Input
-                    label="Overlap"
-                    type="number"
-                    value={overlap.toString()}
-                    onValueChange={(v) => setOverlap(Number(v))}
-                  />
-                </div>
+                  <Select
+                    label="Target Language"
+                    selectedKeys={[language]}
+                    onChange={(e) => {
+                      const newLanguage = e.target.value as 'en' | 'ja';
+                      setLanguage(newLanguage);
+                      // Reset custom prompts when language changes so default prompts for the new language are used
+                      setCustomPrompts({});
+                    }}
+                  >
+                    <SelectItem key="ja" value="ja">Japanese</SelectItem>
+                    <SelectItem key="en" value="en">English</SelectItem>
+                  </Select>
 
-                <Input
-                  label="Max Retries"
-                  type="number"
-                  value={maxRetries.toString()}
-                  onValueChange={(v) => setMaxRetries(Number(v))}
-                />
-
-                <Switch
-                  isSelected={enableProofreader}
-                  onValueChange={setEnableProofreader}
-                >
-                  Enable Proofreader
-                </Switch>
-
-                <div className="border-t pt-4 mt-4">
-                  <h3 className="text-lg font-semibold mb-3">📚 Glossary (Optional)</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                    Upload a glossary JSON file to use predefined character names, terms, locations, events, and style guides during translation.
-                  </p>
-                  
-                  <div className="border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                    <label className="block text-sm font-semibold mb-2 text-blue-900 dark:text-blue-300">
-                      📤 Upload Glossary JSON
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Source Text (Korean)
                     </label>
-                    <input
-                      type="file"
-                      accept=".json"
-                      onChange={handleGlossaryUpload}
-                      className="block w-full text-sm text-gray-500 dark:text-gray-400
-                        file:mr-4 file:py-2 file:px-4
-                        file:rounded-full file:border-0
-                        file:text-sm file:font-semibold
-                        file:bg-blue-50 file:text-blue-700
-                        hover:file:bg-blue-100
-                        dark:file:bg-blue-900/30 dark:file:text-blue-300
-                        cursor-pointer"
-                    />
-                    {glossaryJson && (() => {
-                      try {
-                        const parsed = JSON.parse(glossaryJson);
-                        const getCount = (items: any) => {
-                          if (!items) return 0;
-                          return Array.isArray(items) ? items.length : Object.keys(items).length;
-                        };
-                        
-                        const charCount = getCount(parsed.characters);
-                        const termCount = getCount(parsed.terms);
-                        const placeCount = getCount(parsed.places || parsed.locations);
-                        const eventCount = parsed.events?.length || 0;
-                        
-                        return (
-                          <div className="mt-3 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Chip color="success" size="sm" variant="flat">
-                                ✓ Glossary Loaded
-                              </Chip>
-                              <Button
-                                size="sm"
-                                variant="light"
-                                color="danger"
-                                onPress={() => setGlossaryJson('')}
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                              {charCount > 0 && (
-                                <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
-                                  <span className="font-semibold">{charCount}</span> Characters
-                                </div>
-                              )}
-                              {termCount > 0 && (
-                                <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
-                                  <span className="font-semibold">{termCount}</span> Terms
-                                </div>
-                              )}
-                              {placeCount > 0 && (
-                                <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
-                                  <span className="font-semibold">{placeCount}</span> Places
-                                </div>
-                              )}
-                              {eventCount > 0 && (
-                                <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
-                                  <span className="font-semibold">{eventCount}</span> Events
-                                </div>
-                              )}
-                            </div>
-                            {parsed.style_guide && (
-                              <div className="text-xs bg-white dark:bg-gray-700 rounded p-2">
-                                <span className="font-semibold">Style Guide:</span> {parsed.style_guide.genre || 'N/A'}
-                                {parsed.style_guide.content_rating && ` · ${parsed.style_guide.content_rating}`}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      } catch {
-                        return (
-                          <div className="mt-2">
-                            <Chip color="warning" size="sm" variant="flat">
-                              ⚠ Invalid JSON
-                            </Chip>
-                          </div>
-                        );
-                      }
-                    })()}
-                    <p className="text-xs text-gray-500 mt-2">
-                      Supports both simple and extended glossary formats (characters, terms, places, events, style_guide, etc.)
-                    </p>
-                  </div>
-                </div>
-
-                <div className="border-t pt-4 mt-4">
-                  <h3 className="text-lg font-semibold mb-3">Agent Configuration</h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    Configure the LLM models for each translation stage
-                  </p>
-                  
-                  {(['translation', 'enhancement', 'quality', 'proofreader', 'layout'] as const).map(agent => {
-                    // Check if this agent has custom prompt capability (not quality)
-                    const hasPromptEdit = agent !== 'quality';
-                    
-                    return (
-                      <div key={agent} className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded">
-                        <div className="flex justify-between items-center mb-2">
-                          <h4 className="font-medium capitalize">{agent}</h4>
-                          {hasPromptEdit && (
-                            <Button
-                              size="sm"
-                              variant="flat"
-                              color="secondary"
-                              onPress={() => {
-                                const promptKey = agent as 'translation' | 'enhancement' | 'proofreader' | 'layout';
-                                setEditingPrompt({
-                                  agent: promptKey,
-                                  prompt: customPrompts[promptKey] || getDefaultPrompt(promptKey, language)
-                                });
-                              }}
-                            >
-                              ✏️ Edit Prompt
-                            </Button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <Select
-                            label="Provider"
-                            size="sm"
-                            selectedKeys={[agentConfigs[agent]?.provider || 'gemini']}
-                            onChange={(e) => updateAgentConfig(agent, 'provider', e.target.value)}
-                          >
-                            <SelectItem key="gemini" value="gemini">Gemini</SelectItem>
-                            <SelectItem key="openai" value="openai">OpenAI</SelectItem>
-                            <SelectItem key="anthropic" value="anthropic">Anthropic</SelectItem>
-                          </Select>
-                          
-                          <Input
-                            label="Model"
-                            size="sm"
-                            value={agentConfigs[agent]?.model || ''}
-                            onValueChange={(v) => updateAgentConfig(agent, 'model', v)}
-                          />
-                          
-                          <Input
-                            label="Temperature"
-                            size="sm"
-                            type="number"
-                            step="0.1"
-                            value={agentConfigs[agent]?.temperature?.toString() || '0.3'}
-                            onValueChange={(v) => updateAgentConfig(agent, 'temperature', parseFloat(v))}
-                          />
-                        </div>
-                        {hasPromptEdit && customPrompts[agent as keyof typeof customPrompts] && (
-                          <div className="mt-2">
-                            <Chip size="sm" color="success" variant="flat">
-                              ✓ Custom prompt set
-                            </Chip>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </Tab>
-
-            <Tab key="glossary" title="📚 Glossary Builder">
-              <div className="space-y-4 pt-4">
-                <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
-                  <h3 className="text-lg font-semibold mb-2">Create Interactive Glossary Project</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Analyze your story with AI-powered extraction of characters, events, locations, and relationships. 
-                    Visualize with interactive graphs and export to JSON.
-                  </p>
-                </div>
-
-                <Input
-                  label="Project Name"
-                  placeholder="e.g., My Novel - Chapter 1"
-                  value={name}
-                  onValueChange={setName}
-                  isRequired
-                  description="Give your glossary project a descriptive name"
-                />
-
-                <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-800/50">
-                  <label className="block text-sm font-semibold mb-3 text-gray-900 dark:text-white">
-                    📄 Upload Your Story (Korean Text)
-                  </label>
-                  
-                  <div className="mb-3">
                     <input
                       type="file"
                       accept=".txt"
                       onChange={handleFileUpload}
-                      className="block w-full text-sm text-gray-500 dark:text-gray-400
+                      className="mb-2"
+                    />
+                    <Textarea
+                      placeholder="Paste your Korean text here or upload a file"
+                      value={fileContent}
+                      onValueChange={setFileContent}
+                      minRows={6}
+                      isRequired
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input
+                      label="Chunk Size"
+                      type="number"
+                      value={chunkSize.toString()}
+                      onValueChange={(v) => setChunkSize(Number(v))}
+                    />
+                    <Input
+                      label="Overlap"
+                      type="number"
+                      value={overlap.toString()}
+                      onValueChange={(v) => setOverlap(Number(v))}
+                    />
+                  </div>
+
+                  <Input
+                    label="Max Retries"
+                    type="number"
+                    value={maxRetries.toString()}
+                    onValueChange={(v) => setMaxRetries(Number(v))}
+                  />
+
+                  <Switch
+                    isSelected={enableProofreader}
+                    onValueChange={setEnableProofreader}
+                  >
+                    Enable Proofreader
+                  </Switch>
+
+                  <div className="border-t pt-4 mt-4">
+                    <h3 className="text-lg font-semibold mb-3">📚 Glossary (Optional)</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                      Upload a glossary file (JSON or Text) to use predefined character names, terms, locations, events, and style guides during translation.
+                    </p>
+
+                    <div className="border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
+                      <label className="block text-sm font-semibold mb-2 text-blue-900 dark:text-blue-300">
+                        📤 Upload Glossary File (.json or .txt)
+                      </label>
+                      <input
+                        type="file"
+                        accept=".json,.txt"
+                        onChange={handleGlossaryUpload}
+                        className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200 dark:file:bg-blue-900 dark:file:text-blue-300"
+                      />
+                      {glossaryJson && (() => {
+                        try {
+                          const parsed = JSON.parse(glossaryJson);
+                          const getCount = (items: any) => {
+                            if (!items) return 0;
+                            return Array.isArray(items) ? items.length : Object.keys(items).length;
+                          };
+
+                          const charCount = getCount(parsed.characters);
+                          const termCount = getCount(parsed.terms);
+                          const placeCount = getCount(parsed.places || parsed.locations);
+                          const eventCount = parsed.events?.length || 0;
+
+                          return (
+                            <div className="mt-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Chip color="success" size="sm" variant="flat">
+                                  ✓ Glossary Loaded
+                                </Chip>
+                                <Button
+                                  size="sm"
+                                  variant="light"
+                                  color="danger"
+                                  onPress={() => setGlossaryJson('')}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                                {charCount > 0 && (
+                                  <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
+                                    <span className="font-semibold">{charCount}</span> Characters
+                                  </div>
+                                )}
+                                {termCount > 0 && (
+                                  <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
+                                    <span className="font-semibold">{termCount}</span> Terms
+                                  </div>
+                                )}
+                                {placeCount > 0 && (
+                                  <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
+                                    <span className="font-semibold">{placeCount}</span> Places
+                                  </div>
+                                )}
+                                {eventCount > 0 && (
+                                  <div className="bg-white dark:bg-gray-700 rounded px-2 py-1">
+                                    <span className="font-semibold">{eventCount}</span> Events
+                                  </div>
+                                )}
+                              </div>
+                              {parsed.style_guide && (
+                                <div className="text-xs bg-white dark:bg-gray-700 rounded p-2">
+                                  <span className="font-semibold">Style Guide:</span> {parsed.style_guide.genre || 'N/A'}
+                                  {parsed.style_guide.content_rating && ` · ${parsed.style_guide.content_rating}`}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        } catch {
+                          return (
+                            <div className="mt-2">
+                              <Chip color="warning" size="sm" variant="flat">
+                                ⚠ Invalid JSON
+                              </Chip>
+                            </div>
+                          );
+                        }
+                      })()}
+                      <p className="text-xs text-gray-500 mt-2">
+                        Supports both simple and extended glossary formats (characters, terms, places, events, style_guide, etc.)
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border-t pt-4 mt-4">
+                    <h3 className="text-lg font-semibold mb-3">Agent Configuration</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Configure the LLM models for each translation stage
+                    </p>
+
+                    {(['translation', 'enhancement', 'quality', 'proofreader', 'layout'] as const).map(agent => {
+                      // Check if this agent has custom prompt capability (not quality)
+                      const hasPromptEdit = agent !== 'quality';
+
+                      return (
+                        <div key={agent} className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded">
+                          <div className="flex justify-between items-center mb-2">
+                            <h4 className="font-medium capitalize">{agent}</h4>
+                            {hasPromptEdit && (
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="secondary"
+                                onPress={() => {
+                                  const promptKey = agent as 'translation' | 'enhancement' | 'proofreader' | 'layout';
+                                  setEditingPrompt({
+                                    agent: promptKey,
+                                    prompt: customPrompts[promptKey] || getDefaultPrompt(promptKey, language)
+                                  });
+                                }}
+                              >
+                                ✏️ Edit Prompt
+                              </Button>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <Select
+                              label="Provider"
+                              size="sm"
+                              selectedKeys={[agentConfigs[agent]?.provider || 'gemini']}
+                              onChange={(e) => {
+                                const newProvider = e.target.value as 'gemini' | 'openai' | 'anthropic';
+                                if (newProvider) {
+                                  updateAgentConfig(agent, 'provider', newProvider);
+                                  // Reset model to first available for this provider
+                                  const firstModel = PROVIDER_MODELS[newProvider]?.[0];
+                                  if (firstModel) {
+                                    updateAgentConfig(agent, 'model', firstModel);
+                                    updateAgentConfig(agent, 'temperature', 1);
+                                  }
+                                }
+                              }}
+                            >
+                              <SelectItem key="gemini" value="gemini">Gemini</SelectItem>
+                              <SelectItem key="openai" value="openai">OpenAI</SelectItem>
+                              <SelectItem key="anthropic" value="anthropic">Anthropic</SelectItem>
+                            </Select>
+
+                            <Select
+                              label="Model"
+                              size="sm"
+                              selectedKeys={[agentConfigs[agent]?.model || '']}
+                              onChange={(e) => {
+                                const newModel = e.target.value;
+                                updateAgentConfig(agent, 'model', newModel);
+                                // Set default temperature to 1 for these models
+                                if (newModel) {
+                                  updateAgentConfig(agent, 'temperature', 1);
+                                }
+                              }}
+                            >
+                              {(PROVIDER_MODELS[agentConfigs[agent]?.provider as keyof typeof PROVIDER_MODELS] || []).map((model) => (
+                                <SelectItem key={model} value={model}>
+                                  {model}
+                                </SelectItem>
+                              ))}
+                            </Select>
+
+                            <Input
+                              label="Temperature"
+                              size="sm"
+                              type="number"
+                              step="0.1"
+                              value={agentConfigs[agent]?.temperature?.toString() || '0.3'}
+                              onValueChange={(v) => updateAgentConfig(agent, 'temperature', parseFloat(v))}
+                            />
+                          </div>
+                          {hasPromptEdit && customPrompts[agent as keyof typeof customPrompts] && (
+                            <div className="mt-2">
+                              <Chip size="sm" color="success" variant="flat">
+                                ✓ Custom prompt set
+                              </Chip>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Tab>
+
+              <Tab key="glossary" title="📚 Glossary Builder">
+                <div className="space-y-4 pt-4">
+                  <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+                    <h3 className="text-lg font-semibold mb-2">Create Interactive Glossary Project</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Analyze your story with AI-powered extraction of characters, events, locations, and relationships.
+                      Visualize with interactive graphs and export to JSON.
+                    </p>
+                  </div>
+
+                  <Input
+                    label="Project Name"
+                    placeholder="e.g., My Novel - Chapter 1"
+                    value={name}
+                    onValueChange={setName}
+                    isRequired
+                    description="Give your glossary project a descriptive name"
+                  />
+
+                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-800/50">
+                    <label className="block text-sm font-semibold mb-3 text-gray-900 dark:text-white">
+                      📄 Upload Your Story (Korean Text)
+                    </label>
+
+                    <div className="mb-3">
+                      <input
+                        type="file"
+                        accept=".txt"
+                        onChange={handleFileUpload}
+                        className="block w-full text-sm text-gray-500 dark:text-gray-400
                         file:mr-4 file:py-2 file:px-4
                         file:rounded-full file:border-0
                         file:text-sm file:font-semibold
@@ -1035,172 +1091,292 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         hover:file:bg-purple-100
                         dark:file:bg-purple-900/30 dark:file:text-purple-300
                         cursor-pointer"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Upload a .txt file containing your Korean novel or story
+                      </p>
+                    </div>
+
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
+                      </div>
+                      <div className="relative flex justify-center text-xs">
+                        <span className="px-2 bg-gray-50 dark:bg-gray-800/50 text-gray-500">OR</span>
+                      </div>
+                    </div>
+
+                    <Textarea
+                      placeholder="Paste your Korean text here...&#10;&#10;Example:&#10;김민수는 25살의 용감한 모험가다. 그는 검술의 달인이며, 마법사 이서연과 함께 여행한다..."
+                      value={fileContent}
+                      onValueChange={setFileContent}
+                      minRows={8}
+                      isRequired
+                      classNames={{
+                        input: "text-sm"
+                      }}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Upload a .txt file containing your Korean novel or story
+                    <p className="text-xs text-gray-500 mt-2">
+                      {fileContent.length > 0
+                        ? `${fileContent.length} characters (~ ${Math.round(fileContent.length / 8000)} chunks)`
+                        : 'Text will be processed in chunks of ~8000 characters'}
                     </p>
                   </div>
 
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
-                    </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="px-2 bg-gray-50 dark:bg-gray-800/50 text-gray-500">OR</span>
-                    </div>
+                  <Select
+                    label="Target Language for Translation"
+                    selectedKeys={[language]}
+                    onChange={(e) => {
+                      const newLanguage = e.target.value as 'en' | 'ja';
+                      setLanguage(newLanguage);
+                      // Reset custom prompts when language changes so default prompts for the new language are used
+                      setCustomPrompts({});
+                    }}
+                    description="The language you plan to translate this story into"
+                  >
+                    <SelectItem key="ja" value="ja">Japanese (日本語)</SelectItem>
+                    <SelectItem key="en" value="en">English</SelectItem>
+                  </Select>
+
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <p className="text-xs text-blue-800 dark:text-blue-300">
+                      <strong>💡 Using Gemini 3 Pro Preview</strong> for intelligent analysis.
+                      The AI will extract characters, events, locations, terms, relationships, and story structure.
+                    </p>
+                    <p className="text-xs text-blue-800 dark:text-blue-300 mt-2">
+                      <strong>📊 Background Processing:</strong> Once created, the task will run in the background.
+                      You can monitor progress in the top-right corner and navigate to other pages while it processes.
+                    </p>
+                  </div>
+                </div>
+              </Tab>
+
+              <Tab key="publish" title="🚀 Publish Project">
+                <div className="space-y-4 pt-4">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <h3 className="text-lg font-semibold mb-2">Webnovel Publishing Format</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Format your English novel for Webnovel platform. This tool converts Markdown to the specific raw text format required by Webnovel, handling paragraph spacing and symbol conversions.
+                    </p>
                   </div>
 
-                  <Textarea
-                    placeholder="Paste your Korean text here...&#10;&#10;Example:&#10;김민수는 25살의 용감한 모험가다. 그는 검술의 달인이며, 마법사 이서연과 함께 여행한다..."
-                    value={fileContent}
-                    onValueChange={setFileContent}
-                    minRows={8}
+                  <Input
+                    label="Project Name"
+                    placeholder="My Webnovel Project"
+                    value={name}
+                    onValueChange={setName}
                     isRequired
-                    classNames={{
-                      input: "text-sm"
-                    }}
                   />
-                  <p className="text-xs text-gray-500 mt-2">
-                    {fileContent.length > 0 
-                      ? `${fileContent.length} characters (~ ${Math.round(fileContent.length / 8000)} chunks)`
-                      : 'Text will be processed in chunks of ~8000 characters'}
-                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Source Text (English Markdown)
+                    </label>
+                    <input
+                      type="file"
+                      accept=".txt,.md"
+                      onChange={handleFileUpload}
+                      className="mb-2"
+                    />
+                    <Textarea
+                      placeholder="Paste your English text here..."
+                      value={fileContent}
+                      onValueChange={setFileContent}
+                      minRows={10}
+                      isRequired
+                    />
+                  </div>
+
+                  <div className="border-t pt-4 mt-4">
+                    <h3 className="text-lg font-semibold mb-3">Agent Configuration</h3>
+
+                    <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded">
+                      <div className="flex justify-between items-center mb-2">
+                        <h4 className="font-medium">Publish Agent</h4>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="secondary"
+                          onPress={() => {
+                            setEditingPrompt({
+                              agent: 'publish',
+                              prompt: customPrompts['publish'] || getDefaultPrompt('publish', 'en')
+                            });
+                          }}
+                        >
+                          ✏️ Edit Prompt
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <Select
+                          label="Provider"
+                          size="sm"
+                          selectedKeys={[agentConfigs.publish?.provider || 'gemini']}
+                          onChange={(e) => {
+                            const newProvider = e.target.value as 'gemini' | 'openai' | 'anthropic';
+                            if (newProvider) {
+                              updateAgentConfig('publish', 'provider', newProvider);
+                              const firstModel = PROVIDER_MODELS[newProvider]?.[0];
+                              if (firstModel) {
+                                updateAgentConfig('publish', 'model', firstModel);
+                              }
+                            }
+                          }}
+                        >
+                          <SelectItem key="gemini" value="gemini">Gemini</SelectItem>
+                          <SelectItem key="openai" value="openai">OpenAI</SelectItem>
+                          <SelectItem key="anthropic" value="anthropic">Anthropic</SelectItem>
+                        </Select>
+
+                        <Select
+                          label="Model"
+                          size="sm"
+                          selectedKeys={[agentConfigs.publish?.model || '']}
+                          onChange={(e) => {
+                            updateAgentConfig('publish', 'model', e.target.value);
+                          }}
+                        >
+                          {(PROVIDER_MODELS[agentConfigs.publish?.provider as keyof typeof PROVIDER_MODELS] || []).map((model) => (
+                            <SelectItem key={model} value={model}>
+                              {model}
+                            </SelectItem>
+                          ))}
+                        </Select>
+
+                        <Input
+                          label="Temperature"
+                          size="sm"
+                          type="number"
+                          step="0.1"
+                          value={agentConfigs.publish?.temperature?.toString() || '0.3'}
+                          onValueChange={(v) => updateAgentConfig('publish', 'temperature', parseFloat(v))}
+                        />
+                      </div>
+
+                      {customPrompts['publish'] && (
+                        <div className="mt-2">
+                          <Chip size="sm" color="success" variant="flat">
+                            ✓ Custom prompt set
+                          </Chip>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-
-                <Select
-                  label="Target Language for Translation"
-                  selectedKeys={[language]}
-                  onChange={(e) => setLanguage(e.target.value as 'en' | 'ja')}
-                  description="The language you plan to translate this story into"
-                >
-                  <SelectItem key="ja" value="ja">Japanese (日本語)</SelectItem>
-                  <SelectItem key="en" value="en">English</SelectItem>
-                </Select>
-
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <p className="text-xs text-blue-800 dark:text-blue-300">
-                    <strong>💡 Using Gemini 3 Pro Preview</strong> for intelligent analysis. 
-                    The AI will extract characters, events, locations, terms, relationships, and story structure.
-                  </p>
-                  <p className="text-xs text-blue-800 dark:text-blue-300 mt-2">
-                    <strong>📊 Background Processing:</strong> Once created, the task will run in the background. 
-                    You can monitor progress in the top-right corner and navigate to other pages while it processes.
-                  </p>
-                </div>
-              </div>
-            </Tab>
-          </Tabs>
-        </ModalBody>
-        <ModalFooter>
-          <Button 
-            variant="light" 
-            onPress={onClose}
-          >
-            Cancel
-          </Button>
-          <Button 
-            color="primary" 
-            onPress={handleCreate}
-            isDisabled={!name.trim() || !fileContent.trim()}
-          >
-            Create Project
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-
-    {/* Edit Prompt Modal */}
-    {editingPrompt && (
-      <Modal
-        isOpen={!!editingPrompt}
-        onClose={() => setEditingPrompt(null)}
-        size="3xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>
-            Edit {editingPrompt.agent.charAt(0).toUpperCase() + editingPrompt.agent.slice(1)} Prompt
-          </ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
-                <p className="text-xs text-blue-800 dark:text-blue-300">
-                  <strong>💡 Tip:</strong> You can customize the prompt below. Leave it as is to use the default prompt.
-                  The prompt will be used during the {editingPrompt.agent} stage of translation.
-                </p>
-              </div>
-              
-              <Textarea
-                value={editingPrompt.prompt}
-                onValueChange={(v) => setEditingPrompt(prev => prev ? { ...prev, prompt: v } : null)}
-                minRows={20}
-                maxRows={30}
-                placeholder="Enter your custom prompt here..."
-                classNames={{
-                  input: "font-mono text-sm"
-                }}
-              />
-
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="flat"
-                  color="warning"
-                  onPress={() => {
-                    if (editingPrompt) {
-                      setEditingPrompt({
-                        ...editingPrompt,
-                        prompt: getDefaultPrompt(editingPrompt.agent, language)
-                      });
-                    }
-                  }}
-                >
-                  Reset to Default
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  onPress={() => {
-                    if (editingPrompt) {
-                      setCustomPrompts(prev => {
-                        const newPrompts = { ...prev };
-                        delete newPrompts[editingPrompt.agent];
-                        return newPrompts;
-                      });
-                      setEditingPrompt(null);
-                    }
-                  }}
-                >
-                  Use Default (Remove Custom)
-                </Button>
-              </div>
-            </div>
+              </Tab>
+            </Tabs>
           </ModalBody>
           <ModalFooter>
             <Button
               variant="light"
-              onPress={() => setEditingPrompt(null)}
+              onPress={onClose}
             >
               Cancel
             </Button>
             <Button
               color="primary"
-              onPress={() => {
-                if (editingPrompt) {
-                  setCustomPrompts(prev => ({
-                    ...prev,
-                    [editingPrompt.agent]: editingPrompt.prompt
-                  }));
-                  setEditingPrompt(null);
-                }
-              }}
+              onPress={handleCreate}
+              isDisabled={!name.trim() || !fileContent.trim()}
             >
-              Save Prompt
+              Create Project
             </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
-    )}
+
+      {/* Edit Prompt Modal */}
+      {editingPrompt && (
+        <Modal
+          isOpen={!!editingPrompt}
+          onClose={() => setEditingPrompt(null)}
+          size="3xl"
+          scrollBehavior="inside"
+        >
+          <ModalContent>
+            <ModalHeader>
+              Edit {editingPrompt.agent.charAt(0).toUpperCase() + editingPrompt.agent.slice(1)} Prompt
+            </ModalHeader>
+            <ModalBody>
+              <div className="space-y-4">
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <p className="text-xs text-blue-800 dark:text-blue-300">
+                    <strong>💡 Tip:</strong> You can customize the prompt below. Leave it as is to use the default prompt.
+                    The prompt will be used during the {editingPrompt.agent} stage of translation.
+                  </p>
+                </div>
+
+                <Textarea
+                  value={editingPrompt.prompt}
+                  onValueChange={(v) => setEditingPrompt(prev => prev ? { ...prev, prompt: v } : null)}
+                  minRows={20}
+                  maxRows={30}
+                  placeholder="Enter your custom prompt here..."
+                  classNames={{
+                    input: "font-mono text-sm"
+                  }}
+                />
+
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    color="warning"
+                    onPress={() => {
+                      if (editingPrompt) {
+                        setEditingPrompt({
+                          ...editingPrompt,
+                          prompt: getDefaultPrompt(editingPrompt.agent, language)
+                        });
+                      }
+                    }}
+                  >
+                    Reset to Default
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    onPress={() => {
+                      if (editingPrompt) {
+                        setCustomPrompts(prev => {
+                          const newPrompts = { ...prev };
+                          delete newPrompts[editingPrompt.agent];
+                          return newPrompts;
+                        });
+                        setEditingPrompt(null);
+                      }
+                    }}
+                  >
+                    Use Default (Remove Custom)
+                  </Button>
+                </div>
+              </div>
+            </ModalBody>
+            <ModalFooter>
+              <Button
+                variant="light"
+                onPress={() => setEditingPrompt(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="primary"
+                onPress={() => {
+                  if (editingPrompt) {
+                    setCustomPrompts(prev => ({
+                      ...prev,
+                      [editingPrompt.agent]: editingPrompt.prompt
+                    }));
+                    setEditingPrompt(null);
+                  }
+                }}
+              >
+                Save Prompt
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+      )}
     </>
   );
 };

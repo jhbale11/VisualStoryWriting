@@ -71,21 +71,21 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const setSelectedTexts = useModelStore(state => state.setSelectedTexts);
   const sentenceHovered = useViewModelStore(state => state.sentenceHovered);
   const setSentenceHovered = useViewModelStore(state => state.setSentenceHovered);
-  
+
   const [draggedElementId, setDraggedElementId] = useState<string>('');
   const [elementDroppedTimestamp, setElementDroppedTimestamp] = useState<number>(0);
   const [textMergerMenuPos, setTextMergerMenuPos] = useState<{ x: number, y: number } | null>(null);
   const [contextualMenuPosition, setContextualMenuPosition] = useState<{ x: number, y: number } | null>(null);
-  
+
   const [reviewText, setReviewText] = useState('');
   const reviewModal = useDisclosure();
   const [parsedIssues, setParsedIssues] = useState<ReviewIssue[]>([]);
-  const [issuePositions, setIssuePositions] = useState<{top: number, left: number, textRect: DOMRect}[]>([]);
+  const [issuePositions, setIssuePositions] = useState<{ top: number, left: number, textRect: DOMRect }[]>([]);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
-  
+
   // localStorage key for this chunk's review
   const reviewStorageKey = `review_${props.projectId}_${props.chunkId}`;
-  
+
   // Load saved review from localStorage on mount or chunk change
   useEffect(() => {
     setIsReviewLoaded(false);
@@ -107,14 +107,14 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     }
     setIsReviewLoaded(true);
   }, [reviewStorageKey, props.chunkId]);
-  
+
   // Save review to localStorage whenever parsedIssues changes (but only after initial load)
   useEffect(() => {
     if (!isReviewLoaded) {
       console.log(`[Review] Skipping save - review not yet loaded for chunk ${props.chunkId}`);
       return;
     }
-    
+
     if (parsedIssues.length > 0) {
       try {
         localStorage.setItem(reviewStorageKey, JSON.stringify(parsedIssues));
@@ -132,14 +132,14 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       }
     }
   }, [parsedIssues, reviewStorageKey, props.chunkId, isReviewLoaded]);
-  
+
   // Paragraph matching state
-  const [matchingLines, setMatchingLines] = useState<Array<{x1: number, y1: number, x2: number, y2: number}>>([]);
+  const [matchingLines, setMatchingLines] = useState<Array<{ x1: number, y1: number, x2: number, y2: number }>>([]);
   const [activeEnglishParagraphIndex, setActiveEnglishParagraphIndex] = useState<number | null>(null);
-  
+
   // Get Korean paragraphs (either from paragraphMatches or split by \n\n)
-  const koreanParagraphs = props.paragraphMatches 
-    ? props.paragraphMatches.koreanParagraphs 
+  const koreanParagraphs = props.paragraphMatches
+    ? props.paragraphMatches.koreanParagraphs
     : props.koreanText.split(/\n\n+/).filter(p => p.trim().length > 0);
 
   // Update paragraph matching lines based on text content
@@ -153,19 +153,19 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       const background = document.getElementById('background');
       const transField = document.getElementById('translationField');
       const koreanPanel = document.getElementById('korean-panel');
-      
+
       if (!background || !transField || !koreanPanel) return;
 
       const bgRect = background.getBoundingClientRect();
-      const lines: Array<{x1: number, y1: number, x2: number, y2: number}> = [];
+      const lines: Array<{ x1: number, y1: number, x2: number, y2: number }> = [];
 
       // Get Korean paragraph elements
       const koreanParas = document.querySelectorAll('.korean-paragraph');
-      
+
       // Get English text and split by \n\n to find paragraph positions
       const editor = textFieldEditors['translationField'];
       if (!editor) return;
-      
+
       // Safely extract text from editor
       let englishText = '';
       try {
@@ -180,25 +180,25 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         console.error('Error extracting text from editor:', e);
         return;
       }
-      
+
       if (!englishText) {
         console.log('No text found in editor');
         return;
       }
-      
+
       const englishParagraphs = englishText.split(/\n\n+/).filter((p: string) => p.trim().length > 0);
-      
+
       console.log('Korean paragraphs:', koreanParas.length);
       console.log('English paragraphs (by \\n\\n):', englishParagraphs.length);
       console.log('Originally matched:', props.paragraphMatches?.matches.length || 0);
 
       // Calculate English paragraph positions by measuring text ranges
-      const englishParaPositions: Array<{top: number, height: number}> = [];
-      
+      const englishParaPositions: Array<{ top: number, height: number }> = [];
+
       // Get the contenteditable element
       const contentEditable = transField.querySelector('[contenteditable="true"]');
       if (!contentEditable) return;
-      
+
       // Find the text node inside Slate editor
       const findTextNode = (node: Node): Text | null => {
         if (node.nodeType === Node.TEXT_NODE) {
@@ -210,33 +210,33 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         }
         return null;
       };
-      
+
       const textNode = findTextNode(contentEditable);
       if (!textNode || !textNode.textContent) {
         console.log('No text node found in editor');
         return;
       }
-      
+
       // Use Range API to find paragraph positions in the text
       let currentPos = 0;
       for (let i = 0; i < englishParagraphs.length; i++) {
         const paraText = englishParagraphs[i];
         const paraStart = englishText.indexOf(paraText, currentPos);
         const paraEnd = paraStart + paraText.length;
-        
+
         if (paraStart < 0) {
           console.log(`Paragraph ${i} not found in text`);
           continue;
         }
-        
+
         try {
           const range = document.createRange();
           const startOffset = Math.min(paraStart, textNode.textContent.length);
           const endOffset = Math.min(paraEnd, textNode.textContent.length);
-          
+
           range.setStart(textNode, startOffset);
           range.setEnd(textNode, endOffset);
-          
+
           const rects = range.getClientRects();
           if (rects.length > 0) {
             const firstRect = rects[0];
@@ -251,7 +251,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         } catch (e) {
           console.log(`Error measuring paragraph ${i}:`, e);
         }
-        
+
         currentPos = paraEnd;
       }
 
@@ -285,9 +285,9 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     };
 
     const timeoutId = window.setTimeout(updateMatchingLines, 300);
-    
+
     window.addEventListener('resize', updateMatchingLines);
-    
+
     return () => {
       window.clearTimeout(timeoutId);
       window.removeEventListener('resize', updateMatchingLines);
@@ -321,33 +321,33 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
           setActiveEnglishParagraphIndex(null);
           return;
         }
-        
+
         if (!text) {
           setActiveEnglishParagraphIndex(null);
           return;
         }
-        
+
         const cursorOffset = selection.anchor.offset || 0;
-        
+
         // Split text by \n\n to find which paragraph the cursor is in
         const paragraphs = text.split(/\n\n+/).filter((p: string) => p.trim().length > 0);
-        
+
         let currentPos = 0;
         let foundParaIndex = -1;
-        
+
         for (let i = 0; i < paragraphs.length; i++) {
           const paraText = paragraphs[i];
           const paraStart = text.indexOf(paraText, currentPos);
           const paraEnd = paraStart + paraText.length;
-          
+
           if (paraStart >= 0 && cursorOffset >= paraStart && cursorOffset <= paraEnd) {
             foundParaIndex = i;
             break;
           }
-          
+
           currentPos = paraEnd;
         }
-        
+
         // Only highlight if within matched range
         const matchedCount = props.paragraphMatches.matches.length;
         if (foundParaIndex >= 0 && foundParaIndex < matchedCount) {
@@ -362,7 +362,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     };
 
     document.addEventListener('selectionchange', handleSelectionChange);
-    
+
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
@@ -377,20 +377,20 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       type: 'paragraph',
       children: [{ text: props.englishText }]
     }];
-    
+
     // Create layers with the actual project data
     useModelStore.setState({
       layers: [
-        { 
-          id: '1', 
-          layer: { 
-            name: 'English', 
-            color: '#eef3ff', 
-            isVisible: true, 
+        {
+          id: '1',
+          layer: {
+            name: 'English',
+            color: '#eef3ff',
+            isVisible: true,
             state: englishState,
-            modifications: {} 
-          }, 
-          children: [] 
+            modifications: {}
+          },
+          children: []
         },
         { id: '2', layer: { name: 'Scratch', color: '#fde68a', isVisible: false, modifications: {} }, children: [] }
       ] as any,
@@ -402,7 +402,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       selectedTexts: [], // Clear any previous selections
     });
     useModelStore.getState().refreshTextFields(true);
-    
+
     // Setup layout
     let cleanup: (() => void) | undefined;
     const layout = () => {
@@ -410,37 +410,37 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       const trId = 'translationField';
       const trEl = document.getElementById(trId) as HTMLElement | null;
       if (!koreanPanel || !trEl) return;
-      
+
       const panelGap = 24;
       const reserveRight = 360;
-      const maxWidth = Math.max(600, Math.min(780, Math.floor((window.innerWidth - reserveRight - panelGap*3) / 2)));
+      const maxWidth = Math.max(600, Math.min(780, Math.floor((window.innerWidth - reserveRight - panelGap * 3) / 2)));
       const top = 140;
-      const totalPanelsWidth = maxWidth*2 + panelGap;
+      const totalPanelsWidth = maxWidth * 2 + panelGap;
       const leftStart = Math.max(20, Math.floor((window.innerWidth - reserveRight - totalPanelsWidth) / 2));
       const leftKorean = leftStart;
       const leftTrans = leftKorean + maxWidth + panelGap;
-      
+
       // Position Korean panel - no fixed height, show all content
       koreanPanel.style.position = 'absolute';
       koreanPanel.style.left = leftKorean + 'px';
       koreanPanel.style.top = top + 'px';
       koreanPanel.style.width = maxWidth + 'px';
       koreanPanel.style.minHeight = '600px';
-      
+
       // Position English field - no fixed height, show all content
       const englishHeight = Math.max(600, koreanPanel.scrollHeight);
       useModelStore.getState().setTextField(trId, { x: leftTrans, y: top, width: maxWidth, height: englishHeight });
-      
+
       // Calculate issue positions after layout
       setTimeout(() => findIssuePositions(), 100);
-      
-      cleanup = () => {};
+
+      cleanup = () => { };
     };
-    
+
     const id = window.setTimeout(layout, 0);
     const onResize = () => layout();
     window.addEventListener('resize', onResize);
-    
+
     return () => {
       window.clearTimeout(id);
       window.removeEventListener('resize', onResize);
@@ -561,14 +561,14 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         }
 
         if (sentenceRange && slateRange) {
-          useViewModelStore.getState().setSentenceHovered({ 
-            cursorRange: range, 
-            slateRange: slateRange, 
-            caretPosition: caretPosition, 
-            range: sentenceRange, 
-            rects: [...sentenceRange.getClientRects()], 
-            textfieldId: textField.id, 
-            position: { x: e.clientX, y: e.clientY } 
+          useViewModelStore.getState().setSentenceHovered({
+            cursorRange: range,
+            slateRange: slateRange,
+            caretPosition: caretPosition,
+            range: sentenceRange,
+            rects: [...sentenceRange.getClientRects()],
+            textfieldId: textField.id,
+            position: { x: e.clientX, y: e.clientY }
           });
           return;
         }
@@ -620,7 +620,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         console.error('Error extracting text for save:', e);
         return;
       }
-      
+
       console.log('=== Saving ===');
       console.log('Text length:', text.length);
       console.log('Contains \\n\\n:', text.includes('\n\n'));
@@ -637,7 +637,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       console.error('No editor found for translationField');
       return;
     }
-    
+
     // Get the full text (already contains \n\n as actual text)
     let en = '';
     try {
@@ -654,7 +654,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       console.error('Error extracting text for review:', e);
       return;
     }
-    
+
     console.log('=== Review Text Extraction ===');
     console.log('Korean text length:', ko.length);
     console.log('English text length:', en.length);
@@ -662,23 +662,23 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     console.log('English first 100 chars:', en.substring(0, 100));
     console.log('Korean last 100 chars:', ko.substring(Math.max(0, ko.length - 100)));
     console.log('English last 100 chars:', en.substring(Math.max(0, en.length - 100)));
-    
+
     if (!en || en.trim().length === 0) {
       alert('No text to review');
       return;
     }
-    
-    const schema = z.object({ 
-      issues: z.array(z.object({ 
-        text: z.string(), 
-        category: z.string(), 
-        subcategory: z.string().optional(), 
-        severity: z.enum(['high','medium','low']), 
-        message: z.string(), 
-        suggestion: z.string().optional() 
-      })) 
+
+    const schema = z.object({
+      issues: z.array(z.object({
+        text: z.string(),
+        category: z.string(),
+        subcategory: z.string().optional(),
+        severity: z.enum(['high', 'medium', 'low']),
+        message: z.string(),
+        suggestion: z.string().optional()
+      }))
     });
-    
+
     const prompt = `You are a professional Korean→English novel translation reviewer. Your job is to provide comprehensive feedback.
 
 TASK: Review the English translation against Korean source and provide EXACTLY 10-20 issues (NOT LESS THAN 10).
@@ -722,10 +722,10 @@ ENGLISH TRANSLATION (${en.length} chars):
 ${en}
 
 REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
-    
+
     setReviewText('Running review...');
     reviewModal.onOpen();
-    
+
     useModelStore.getState().executePrompt({ prompt, response_format: { zodObject: schema, name: 'review' } }).then((res) => {
       const parsed = res.parsed as { issues: ReviewIssue[] } | undefined;
       console.log('Review result:', parsed);
@@ -745,7 +745,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
   function findIssuePositions() {
     const editor = textFieldEditors['translationField'];
     if (!editor || parsedIssues.length === 0) return;
-    
+
     const trEl = document.getElementById('translationField');
     if (!trEl) return;
 
@@ -766,7 +766,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
     if (!text) return;
 
     const state = editor.children as any;
-    const positions: {top: number, left: number, textRect: DOMRect}[] = [];
+    const positions: { top: number, left: number, textRect: DOMRect }[] = [];
 
     for (const issue of parsedIssues) {
       let start = issue.start;
@@ -782,19 +782,19 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
 
       const a = SlateUtils.toSlatePoint(state, start);
       const b = SlateUtils.toSlatePoint(state, end);
-      
+
       if (a && b) {
         try {
           const domRange = ReactEditor.toDOMRange(editor as any, { anchor: a, focus: b } as any);
           const rect = domRange.getBoundingClientRect();
           const trRect = trEl.getBoundingClientRect();
-          
+
           // Calculate position relative to the translation field container
           const relativeTop = rect.top - trRect.top + trEl.scrollTop;
           const relativeLeft = rect.right - trRect.left;
-          
-          positions.push({ 
-            top: relativeTop, 
+
+          positions.push({
+            top: relativeTop,
             left: relativeLeft,
             textRect: rect
           });
@@ -812,7 +812,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
   const scrollToIssue = (issue: ReviewIssue) => {
     const editor = textFieldEditors['translationField'];
     if (!editor) return;
-    
+
     // Get the full text (already contains \n\n as actual text)
     let text = '';
     try {
@@ -826,9 +826,9 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
       console.error('Error extracting text for scrollToIssue:', e);
       return;
     }
-    
+
     if (!text) return;
-    
+
     let start = issue.start;
     let end = issue.end;
     if ((start === undefined || end === undefined) && issue.text) {
@@ -852,7 +852,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
             const el = document.getElementById('translationField') as HTMLElement | null;
             el?.scrollIntoView({ block: 'nearest' });
           }
-        } catch {}
+        } catch { }
       }, 0);
     }
   };
@@ -865,7 +865,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
     if (!background) return null;
 
     const bgRect = background.getBoundingClientRect();
-    
+
     // Calculate total height needed
     const koreanPanel = document.getElementById('korean-panel');
     const transField = document.getElementById('translationField');
@@ -923,9 +923,9 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
         </Button>
         <Divider orientation='vertical' />
         {props.onRetranslate && (
-          <Button 
-            size='sm' 
-            color='warning' 
+          <Button
+            size='sm'
+            color='warning'
             variant='flat'
             onClick={props.onRetranslate}
             isDisabled={props.isRetranslating}
@@ -939,8 +939,8 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
         </Button>
         {parsedIssues.length > 0 && (
           <>
-            <span style={{ 
-              fontSize: 13, 
+            <span style={{
+              fontSize: 13,
               fontWeight: 600,
               padding: '4px 12px',
               borderRadius: 6,
@@ -949,9 +949,9 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
             }}>
               {parsedIssues.length} {parsedIssues.length >= 10 ? '✓' : '⚠️'} issues
             </span>
-            <Button 
-              size='sm' 
-              color='danger' 
+            <Button
+              size='sm'
+              color='danger'
               variant='flat'
               onClick={() => {
                 setParsedIssues([]);
@@ -995,12 +995,12 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
           }}
         >
           <DragnDrop onDragging={onTextFieldDragged} onDraggingEnd={onTextFieldDraggingEnded} />
-          
+
           {/* Paragraph matching lines overlay */}
           {renderMatchingLines()}
-          
+
           {/* Korean paragraphs (read-only) */}
-          <div 
+          <div
             id="korean-panel"
             style={{
               position: 'absolute',
@@ -1021,7 +1021,8 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
                   style={{
                     marginBottom: idx < koreanParagraphs.length - 1 ? 16 : 0,
                     lineHeight: 1.8,
-                    fontSize: 17,
+                    fontSize: 18,
+                    letterSpacing: '0.05em',
                     color: '#1a1a1a',
                     backgroundColor: isActive ? 'rgba(255, 107, 107, 0.1)' : 'transparent',
                     borderLeft: isActive ? '3px solid #ff6b6b' : '3px solid transparent',
@@ -1035,7 +1036,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
               );
             })}
           </div>
-          
+
           {/* English text field (editable) */}
           {textFields.length > 0 && textFields.map((textField, index) => {
             return <EditableTextField isMoveable={true} textField={textField} key={index} style={{ display: textField.isVisible ? 'block' : 'none', zIndex: (sentenceHovered !== null && sentenceHovered.textfieldId === textField.id) ? 4 : 99 }} />;
@@ -1045,31 +1046,31 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
           {parsedIssues.length > 0 && issuePositions.length > 0 && (() => {
             const trEl = document.getElementById('translationField');
             if (!trEl) return null;
-            
+
             const trRect = trEl.getBoundingClientRect();
             const cardWidth = 300;
             const cardMinGap = 12; // Increased from 8 to 16 for better spacing
             const cardLeft = trRect.right + 16;
-            
+
             // Calculate non-overlapping positions
             const adjustedPositions: number[] = [];
             let lastBottom = 0;
-            
+
             issuePositions.forEach((pos, idx) => {
               if (!pos || pos.top === 0) {
                 adjustedPositions.push(0);
                 return;
               }
-              
+
               let desiredTop = trRect.top + pos.top - trEl.scrollTop;
-              
+
               // Ensure minimum gap between cards
               if (adjustedPositions.length > 0 && desiredTop < lastBottom + cardMinGap) {
                 desiredTop = lastBottom + cardMinGap;
               }
-              
+
               adjustedPositions.push(desiredTop);
-              
+
               // More accurate card height estimation
               const issue = parsedIssues[idx];
               const baseHeight = 80; // Base height for category, severity, message
@@ -1078,31 +1079,31 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
               const suggestionHeight = issue.suggestion ? 70 + Math.ceil((issue.suggestion.length || 0) / 55) * 16 : 0;
               const textHeight = issue.text ? 30 : 0;
               const estimatedHeight = baseHeight + messageHeight + suggestionHeight + textHeight;
-              
+
               lastBottom = desiredTop + estimatedHeight;
             });
-            
+
             return (
               <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
                 {parsedIssues.map((iss, idx) => {
                   const cardTop = adjustedPositions[idx];
                   if (cardTop === 0) return null;
-                  
+
                   const color = CATEGORY_COLOR[iss.category] || 'rgba(255,196,0,0.45)';
                   const solidColor = color.replace('0.35', '1');
-                  
+
                   return (
-                    <div 
+                    <div
                       key={idx}
-                      style={{ 
-                        position: 'absolute', 
-                        left: cardLeft, 
+                      style={{
+                        position: 'absolute',
+                        left: cardLeft,
                         top: cardTop,
                         width: cardWidth,
-                        background: 'white', 
-                        border: '1px solid #e5e7eb', 
+                        background: 'white',
+                        border: '1px solid #e5e7eb',
                         borderLeft: `4px solid ${solidColor}`,
-                        borderRadius: 8, 
+                        borderRadius: 8,
                         padding: 12,
                         marginBottom: 8, // Add explicit margin
                         boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
@@ -1114,8 +1115,8 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
                       <div style={{ fontSize: 12, color: '#374151' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                           <span style={{ fontWeight: 700, fontSize: 13 }}>{iss.category}{iss.subcategory ? `/${iss.subcategory}` : ''}</span>
-                          <span style={{ 
-                            fontSize: 10, 
+                          <span style={{
+                            fontSize: 10,
                             fontWeight: 600,
                             color: iss.severity === 'high' ? '#dc2626' : iss.severity === 'medium' ? '#f59e0b' : '#10b981',
                             textTransform: 'uppercase'
@@ -1140,7 +1141,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
               </div>
             );
           })()}
-          
+
           {sentenceHoveredRects.map((rect, index) => {
             return <div key={index} style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, background: 'rgba(0, 0, 0, 0.1)', pointerEvents: 'none', zIndex: 5 }}></div>;
           })}
@@ -1166,7 +1167,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
             onClose={() => setContextualMenuPosition(null)}
             isOpen={true}>
             <DropdownTrigger>
-              <div style={{ position: 'absolute', left: contextualMenuPosition.x, top: contextualMenuPosition.y, width: 1, height: 1, background: 'red'}}>⋮
+              <div style={{ position: 'absolute', left: contextualMenuPosition.x, top: contextualMenuPosition.y, width: 1, height: 1, background: 'red' }}>⋮
               </div>
             </DropdownTrigger>
             <DropdownMenu disabledKeys={selectedTexts.length === 0 ? ['cut', 'copy'] : []} variant="flat" aria-label="Dropdown menu with shortcut">
@@ -1221,7 +1222,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
             </DropdownMenu>
           </Dropdown>}
         </div>
-        
+
         <Toolbar />
 
         <div id="rightPanel" style={{ position: 'fixed', right: 0, top: 60, paddingTop: 20, paddingRight: 20, paddingBottom: 20, display: 'flex', flexDirection: 'column', gap: 20, height: 'calc(100vh - 60px)', zIndex: 1000, overflow: 'auto' }}>
@@ -1235,7 +1236,7 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
         <ModalContent>
           <ModalHeader>Review Result</ModalHeader>
           <ModalBody>
-            <Textarea value={reviewText} minRows={20} onChange={() => {}} />
+            <Textarea value={reviewText} minRows={20} onChange={() => { }} />
           </ModalBody>
         </ModalContent>
       </Modal>

@@ -28,14 +28,16 @@ export class TranslationAgent {
     metadata?: ChunkMetadata,
     previousContext?: string
   ): Promise<string> {
-    const glossaryStr = this.glossary ? this.formatGlossary(this.glossary) : '';
+    const glossaryStr = this.glossary
+      ? (typeof this.glossary === 'string' ? this.glossary : this.formatGlossary(this.glossary))
+      : '';
     const contextStr = previousContext ? `\n\nPrevious context for continuity:\n${previousContext}` : '';
-    const customInstructionStr = metadata?.custom_instruction 
-      ? `\n\nCustom instruction: ${metadata.custom_instruction}` 
+    const customInstructionStr = metadata?.custom_instruction
+      ? `\n\nCustom instruction: ${metadata.custom_instruction}`
       : '';
 
     const systemPrompt = this.prompt + (glossaryStr ? `\n\nGlossary:\n${glossaryStr}` : '');
-    
+
     const userPrompt = `Translate the following Korean text:${contextStr}${customInstructionStr}
 
 ${text}`;
@@ -46,8 +48,8 @@ ${text}`;
     ];
 
     const response = await this.client.invoke(messages);
-    const content = typeof response.content === 'string' 
-      ? response.content 
+    const content = typeof response.content === 'string'
+      ? response.content
       : JSON.stringify(response.content);
 
     return content.trim();
@@ -60,13 +62,13 @@ ${text}`;
     // Helper to convert to array
     const toArray = (items: any) => {
       if (!items) return [];
-      return Array.isArray(items) 
-        ? items 
-        : Object.entries(items).map(([key, value]) => 
-            typeof value === 'object' && value !== null 
-              ? { key, ...value } 
-              : { key, value }
-          );
+      return Array.isArray(items)
+        ? items
+        : Object.entries(items).map(([key, value]) =>
+          typeof value === 'object' && value !== null
+            ? { key, ...value }
+            : { key, value }
+        );
     };
 
     // Characters
@@ -77,14 +79,14 @@ ${text}`;
         const korean = char.korean_name || char.name || char.key;
         const english = char.english_name || char.english || char.name;
         const details: string[] = [`${korean} → ${english}`];
-        
+
         if (char.age) details.push(`Age: ${char.age}`);
         if (char.gender) details.push(`Gender: ${char.gender}`);
         if (char.personality) details.push(`Personality: ${char.personality}`);
         if (char.tone || char.speech_style) details.push(`Tone: ${char.tone || char.speech_style}`);
         if (char.honorifics) details.push(`Honorifics: ${char.honorifics}`);
         if (char.description) details.push(`Description: ${char.description.substring(0, 100)}...`);
-        
+
         lines.push(`  - ${details.join(', ')}`);
       }
     }

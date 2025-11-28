@@ -24,6 +24,7 @@ import {
 } from '@nextui-org/react';
 import { FiArrowLeft, FiPlay, FiPause, FiDownload, FiUpload, FiEdit2, FiEdit } from 'react-icons/fi';
 import { TranslationReview } from './TranslationReview';
+import { PublishProjectDetail } from './PublishProjectDetail';
 
 interface ProjectDetailProps {
   project: TranslationProject;
@@ -36,16 +37,16 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project: initialPr
   const [glossaryJson, setGlossaryJson] = useState('');
   const [isReviewMode, setIsReviewMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   const { isOpen: isEditGlossaryOpen, onOpen: onEditGlossaryOpen, onClose: onEditGlossaryClose } = useDisclosure();
   const { isOpen: isUploadGlossaryOpen, onOpen: onUploadGlossaryOpen, onClose: onUploadGlossaryClose } = useDisclosure();
 
   // Always get the latest project from store to reflect updates
   // Check both active and archived projects
-  const project = projects.find(p => p.id === initialProject.id) || 
-                 archivedProjects.find(p => p.id === initialProject.id) || 
-                 initialProject;
-  
+  const project = projects.find(p => p.id === initialProject.id) ||
+    archivedProjects.find(p => p.id === initialProject.id) ||
+    initialProject;
+
   // Debug: Log project state on every render
   useEffect(() => {
     console.log('[ProjectDetail] Project state:', {
@@ -56,6 +57,11 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project: initialPr
       glossarySize: project.glossary ? JSON.stringify(project.glossary).length : 0,
     });
   }, [project]);
+
+  // Render PublishProjectDetail if project type is 'publish'
+  if (project.type === 'publish') {
+    return <PublishProjectDetail project={project} />;
+  }
 
   const activeTask = activeTaskId ? tasks[activeTaskId] : undefined;
 
@@ -91,7 +97,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ project: initialPr
       hasGlossary: !!project.glossary,
       glossaryKeys: project.glossary ? Object.keys(project.glossary) : 'none',
     });
-    
+
     if (!project.glossary) {
       console.error('[ProjectDetail] Glossary check failed:', {
         status: project.status,
@@ -105,7 +111,7 @@ Has Glossary: ${!!project.glossary}
 Please upload or generate glossary first.`);
       return;
     }
-    
+
     const taskId = createTask({
       type: 'translation',
       projectId: project.id,
@@ -126,7 +132,7 @@ Please upload or generate glossary first.`);
       .map(c => c.translations.final)
       .filter(Boolean)
       .join('\n\n');
-    
+
     const blob = new Blob([finalTexts], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -138,7 +144,7 @@ Please upload or generate glossary first.`);
 
   const handleDownloadGlossary = () => {
     if (!project.glossary) return;
-    
+
     const blob = new Blob([JSON.stringify(project.glossary, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -168,19 +174,19 @@ Please upload or generate glossary first.`);
 
     try {
       const parsedGlossary = JSON.parse(glossaryJson) as Glossary;
-      
+
       // Validate that it's a valid glossary object
       if (typeof parsedGlossary !== 'object' || parsedGlossary === null) {
         throw new Error('Invalid glossary format');
       }
-      
+
       // Use setGlossary which properly updates status and saves to storage
       setGlossary(project.id, parsedGlossary);
-      
+
       // Close modal and clear input
       onUploadGlossaryClose();
       setGlossaryJson('');
-      
+
       // Show success message
       setTimeout(() => {
         alert('Glossary uploaded successfully! You can now start translation.');
@@ -199,18 +205,18 @@ Please upload or generate glossary first.`);
 
     try {
       const parsedGlossary = JSON.parse(glossaryJson) as Glossary;
-      
+
       // Validate that it's a valid glossary object
       if (typeof parsedGlossary !== 'object' || parsedGlossary === null) {
         throw new Error('Invalid glossary format');
       }
-      
+
       // Use setGlossary to ensure proper storage sync
       setGlossary(project.id, parsedGlossary);
-      
+
       // Close modal
       onEditGlossaryClose();
-      
+
       // Show success message
       setTimeout(() => {
         alert('Glossary saved successfully!');
@@ -225,7 +231,7 @@ Please upload or generate glossary first.`);
     if (!project.glossary) return null;
 
     const glossary = project.glossary as any;
-    
+
     // Helper to get items as array
     const getItemsAsArray = (items: any) => {
       if (!items) return [];
@@ -236,7 +242,7 @@ Please upload or generate glossary first.`);
     const characters = getItemsAsArray(glossary.characters);
     const terms = getItemsAsArray(glossary.terms);
     const places = getItemsAsArray(glossary.places || glossary.locations);
-    
+
     return (
       <div className="space-y-4">
         {/* Characters */}
@@ -352,7 +358,7 @@ Please upload or generate glossary first.`);
             </CardHeader>
           </Card>
         )}
-        
+
         {glossary.style_guide && (
           <Card>
             <CardHeader>
@@ -393,8 +399,8 @@ Please upload or generate glossary first.`);
   if (isReviewMode) {
     return (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: '#F2EEF0' }}>
-        <TranslationReview 
-          project={project} 
+        <TranslationReview
+          project={project}
           onClose={() => setIsReviewMode(false)}
         />
       </div>
@@ -405,136 +411,214 @@ Please upload or generate glossary first.`);
     <>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
         <div className="max-w-7xl mx-auto">
-        <div className="mb-6">
-          <Button
-            variant="light"
-            startContent={<FiArrowLeft />}
-            onPress={() => selectProject(undefined as any)}
-          >
-            Back to Projects
-          </Button>
-        </div>
-
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">{project.name}</h1>
-          <div className="flex gap-2 items-center">
-            <Chip size="sm" variant="flat">
-              {project.type === 'glossary' ? 'Glossary' : 'Translation'}
-            </Chip>
-            <Chip size="sm" variant="flat">
-              {project.language === 'ja' ? 'Japanese' : 'English'}
-            </Chip>
-            <Chip
-              size="sm"
-              color={project.status === 'translation_completed' ? 'success' : 'primary'}
+          <div className="mb-6">
+            <Button
+              variant="light"
+              startContent={<FiArrowLeft />}
+              onPress={() => selectProject(undefined as any)}
             >
-              {project.status}
-            </Chip>
+              Back to Projects
+            </Button>
           </div>
-        </div>
 
-        <Tabs selectedKey={selectedTab} onSelectionChange={(k) => setSelectedTab(k as string)}>
-          <Tab key="overview" title="Overview">
-            <div className="pt-4 space-y-6">
-              {/* Progress Card */}
-              <Card>
-                <CardHeader>
-                  <h3 className="text-lg font-semibold">Translation Progress</h3>
-                </CardHeader>
-                <CardBody>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex justify-between mb-2">
-                        <span>Overall Progress</span>
-                        <span>{Math.round(project.translation_progress * 100)}%</span>
-                      </div>
-                      <Progress
-                        value={project.translation_progress * 100}
-                        color={project.translation_progress === 1 ? 'success' : 'primary'}
-                      />
-                    </div>
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold mb-2">{project.name}</h1>
+            <div className="flex gap-2 items-center">
+              <Chip size="sm" variant="flat">
+                {project.type === 'glossary' ? 'Glossary' : 'Translation'}
+              </Chip>
+              <Chip size="sm" variant="flat">
+                {project.language === 'ja' ? 'Japanese' : 'English'}
+              </Chip>
+              <Chip
+                size="sm"
+                color={project.status === 'translation_completed' ? 'success' : 'primary'}
+              >
+                {project.status}
+              </Chip>
+            </div>
+          </div>
 
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <p className="text-2xl font-bold">{totalChunks}</p>
-                        <p className="text-sm text-gray-600">Total Chunks</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-green-600">{completedChunks}</p>
-                        <p className="text-sm text-gray-600">Completed</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-blue-600">
-                          {totalChunks - completedChunks}
-                        </p>
-                        <p className="text-sm text-gray-600">Remaining</p>
-                      </div>
-                    </div>
-                  </div>
-                </CardBody>
-              </Card>
-
-              {/* Active Task Card */}
-              {activeTask && (
+          <Tabs selectedKey={selectedTab} onSelectionChange={(k) => setSelectedTab(k as string)}>
+            <Tab key="overview" title="Overview">
+              <div className="pt-4 space-y-6">
+                {/* Progress Card */}
                 <Card>
                   <CardHeader>
-                    <h3 className="text-lg font-semibold">Current Task</h3>
+                    <h3 className="text-lg font-semibold">Translation Progress</h3>
                   </CardHeader>
                   <CardBody>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="font-medium">{activeTask.type}</span>
-                        <Chip
-                          size="sm"
-                          color={
-                            activeTask.status === 'completed'
-                              ? 'success'
-                              : activeTask.status === 'failed'
-                              ? 'danger'
-                              : 'warning'
-                          }
-                        >
-                          {activeTask.status}
-                        </Chip>
-                      </div>
-                      
-                      {activeTask.status === 'running' && (
-                        <div>
-                          <div className="flex justify-between mb-2">
-                            <span>{activeTask.message}</span>
-                            <span>{Math.round(activeTask.progress * 100)}%</span>
-                          </div>
-                          <Progress value={activeTask.progress * 100} />
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex justify-between mb-2">
+                          <span>Overall Progress</span>
+                          <span>{Math.round(project.translation_progress * 100)}%</span>
                         </div>
-                      )}
+                        <Progress
+                          value={project.translation_progress * 100}
+                          color={project.translation_progress === 1 ? 'success' : 'primary'}
+                        />
+                      </div>
 
-                      {activeTask.error && (
-                        <div className="text-red-600 text-sm">{activeTask.error}</div>
-                      )}
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div>
+                          <p className="text-2xl font-bold">{totalChunks}</p>
+                          <p className="text-sm text-gray-600">Total Chunks</p>
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-green-600">{completedChunks}</p>
+                          <p className="text-sm text-gray-600">Completed</p>
+                        </div>
+                        <div>
+                          <p className="text-2xl font-bold text-blue-600">
+                            {totalChunks - completedChunks}
+                          </p>
+                          <p className="text-sm text-gray-600">Remaining</p>
+                        </div>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
 
-                      {activeTask.status === 'running' && (
+                {/* Active Task Card */}
+                {activeTask && (
+                  <Card>
+                    <CardHeader>
+                      <h3 className="text-lg font-semibold">Current Task</h3>
+                    </CardHeader>
+                    <CardBody>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="font-medium">{activeTask.type}</span>
+                          <Chip
+                            size="sm"
+                            color={
+                              activeTask.status === 'completed'
+                                ? 'success'
+                                : activeTask.status === 'failed'
+                                  ? 'danger'
+                                  : 'warning'
+                            }
+                          >
+                            {activeTask.status}
+                          </Chip>
+                        </div>
+
+                        {activeTask.status === 'running' && (
+                          <div>
+                            <div className="flex justify-between mb-2">
+                              <span>{activeTask.message}</span>
+                              <span>{Math.round(activeTask.progress * 100)}%</span>
+                            </div>
+                            <Progress value={activeTask.progress * 100} />
+                          </div>
+                        )}
+
+                        {activeTask.error && (
+                          <div className="text-red-600 text-sm">{activeTask.error}</div>
+                        )}
+
+                        {activeTask.status === 'running' && (
+                          <Button
+                            color="danger"
+                            variant="flat"
+                            startContent={<FiPause />}
+                            onPress={handleCancelTask}
+                          >
+                            Cancel Task
+                          </Button>
+                        )}
+                      </div>
+                    </CardBody>
+                  </Card>
+                )}
+
+                {/* Actions Card */}
+                <Card>
+                  <CardHeader>
+                    <h3 className="text-lg font-semibold">Actions</h3>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="flex gap-3">
+                      {!project.glossary && (
                         <Button
-                          color="danger"
-                          variant="flat"
-                          startContent={<FiPause />}
-                          onPress={handleCancelTask}
+                          color="primary"
+                          startContent={<FiPlay />}
+                          onPress={handleGenerateGlossary}
+                          isDisabled={activeTask?.status === 'running'}
                         >
-                          Cancel Task
+                          Generate Glossary
+                        </Button>
+                      )}
+
+                      {project.glossary && project.status !== 'translation_completed' && (
+                        <Button
+                          color="success"
+                          startContent={<FiPlay />}
+                          onPress={handleStartTranslation}
+                          isDisabled={activeTask?.status === 'running'}
+                        >
+                          Start Translation
+                        </Button>
+                      )}
+
+                      {project.translation_progress > 0 && (
+                        <Button
+                          color="secondary"
+                          startContent={<FiDownload />}
+                          onPress={handleDownloadFinal}
+                        >
+                          Download Translation
                         </Button>
                       )}
                     </div>
                   </CardBody>
                 </Card>
-              )}
+              </div>
+            </Tab>
 
-              {/* Actions Card */}
-              <Card>
-                <CardHeader>
-                  <h3 className="text-lg font-semibold">Actions</h3>
-                </CardHeader>
-                <CardBody>
-                  <div className="flex gap-3">
-                    {!project.glossary && (
+            <Tab key="glossary" title="Glossary">
+              <div className="pt-4">
+                {project.glossary ? (
+                  <div className="space-y-4">
+                    {/* Action Buttons */}
+                    <div className="flex gap-3">
+                      <Button
+                        color="primary"
+                        startContent={<FiDownload />}
+                        onPress={handleDownloadGlossary}
+                      >
+                        Download Glossary
+                      </Button>
+                      <Button
+                        color="secondary"
+                        startContent={<FiEdit2 />}
+                        onPress={() => {
+                          setGlossaryJson(JSON.stringify(project.glossary, null, 2));
+                          onEditGlossaryOpen();
+                        }}
+                      >
+                        Edit Glossary
+                      </Button>
+                      <Button
+                        variant="bordered"
+                        startContent={<FiUpload />}
+                        onPress={() => {
+                          setGlossaryJson('');
+                          onUploadGlossaryOpen();
+                        }}
+                      >
+                        Replace Glossary
+                      </Button>
+                    </div>
+
+                    {/* Glossary Preview */}
+                    {renderGlossaryPreview()}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-gray-500 mb-4">No glossary available</p>
+                    <div className="flex gap-3 justify-center">
                       <Button
                         color="primary"
                         startContent={<FiPlay />}
@@ -543,206 +627,128 @@ Please upload or generate glossary first.`);
                       >
                         Generate Glossary
                       </Button>
-                    )}
-
-                    {project.glossary && project.status !== 'translation_completed' && (
                       <Button
-                        color="success"
-                        startContent={<FiPlay />}
-                        onPress={handleStartTranslation}
-                        isDisabled={activeTask?.status === 'running'}
+                        variant="bordered"
+                        startContent={<FiUpload />}
+                        onPress={() => {
+                          setGlossaryJson('');
+                          onUploadGlossaryOpen();
+                        }}
                       >
-                        Start Translation
+                        Upload Glossary
                       </Button>
-                    )}
-
-                    {project.translation_progress > 0 && (
-                      <Button
-                        color="secondary"
-                        startContent={<FiDownload />}
-                        onPress={handleDownloadFinal}
-                      >
-                        Download Translation
-                      </Button>
-                    )}
+                    </div>
                   </div>
-                </CardBody>
-              </Card>
-            </div>
-          </Tab>
+                )}
+              </div>
+            </Tab>
 
-          <Tab key="glossary" title="Glossary">
-            <div className="pt-4">
-              {project.glossary ? (
-                <div className="space-y-4">
-                  {/* Action Buttons */}
-                  <div className="flex gap-3">
-                    <Button
-                      color="primary"
-                      startContent={<FiDownload />}
-                      onPress={handleDownloadGlossary}
-                    >
-                      Download Glossary
-                    </Button>
-                    <Button
-                      color="secondary"
-                      startContent={<FiEdit2 />}
-                      onPress={() => {
-                        setGlossaryJson(JSON.stringify(project.glossary, null, 2));
-                        onEditGlossaryOpen();
-                      }}
-                    >
-                      Edit Glossary
-                    </Button>
-                    <Button
-                      variant="bordered"
-                      startContent={<FiUpload />}
-                      onPress={() => {
-                        setGlossaryJson('');
-                        onUploadGlossaryOpen();
-                      }}
-                    >
-                      Replace Glossary
-                    </Button>
-                  </div>
-
-                  {/* Glossary Preview */}
-                  {renderGlossaryPreview()}
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <p className="text-gray-500 mb-4">No glossary available</p>
-                  <div className="flex gap-3 justify-center">
-                    <Button 
-                      color="primary" 
-                      startContent={<FiPlay />}
-                      onPress={handleGenerateGlossary}
-                      isDisabled={activeTask?.status === 'running'}
-                    >
-                      Generate Glossary
-                    </Button>
-                    <Button
-                      variant="bordered"
-                      startContent={<FiUpload />}
-                      onPress={() => {
-                        setGlossaryJson('');
-                        onUploadGlossaryOpen();
-                      }}
-                    >
-                      Upload Glossary
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </Tab>
-
-          <Tab key="chunks" title="Chunks">
-            <div className="pt-4">
-              <Accordion>
-                {project.chunks.map((chunk, idx) => (
-                  <AccordionItem
-                    key={chunk.id}
-                    title={
-                      <div className="flex justify-between items-center w-full">
-                        <span>Chunk {idx + 1}</span>
-                        <Chip
-                          size="sm"
-                          color={
-                            chunk.status === 'completed'
-                              ? 'success'
-                              : chunk.status === 'processing'
-                              ? 'warning'
-                              : 'default'
-                          }
-                        >
-                          {chunk.status}
-                        </Chip>
-                      </div>
-                    }
-                  >
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="font-semibold mb-2">Original (Korean)</h4>
-                        <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded max-h-40 overflow-y-auto">
-                          {chunk.text}
-                        </div>
-                      </div>
-
-                      {chunk.translations.final && (
-                        <div>
-                          <h4 className="font-semibold mb-2">
-                            Translation ({project.language === 'ja' ? 'Japanese' : 'English'})
-                          </h4>
-                          <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded max-h-40 overflow-y-auto">
-                            {chunk.translations.final}
-                          </div>
-                        </div>
-                      )}
-
-                      {chunk.translations.qualityScore && (
-                        <div>
-                          <span className="font-semibold">Quality Score: </span>
+            <Tab key="chunks" title="Chunks">
+              <div className="pt-4">
+                <Accordion>
+                  {project.chunks.map((chunk, idx) => (
+                    <AccordionItem
+                      key={chunk.id}
+                      title={
+                        <div className="flex justify-between items-center w-full">
+                          <span>Chunk {idx + 1}</span>
                           <Chip
                             size="sm"
                             color={
-                              chunk.translations.qualityScore >= 80
+                              chunk.status === 'completed'
                                 ? 'success'
-                                : chunk.translations.qualityScore >= 60
-                                ? 'warning'
-                                : 'danger'
+                                : chunk.status === 'processing'
+                                  ? 'warning'
+                                  : 'default'
                             }
                           >
-                            {chunk.translations.qualityScore}
+                            {chunk.status}
                           </Chip>
                         </div>
-                      )}
-                    </div>
-                  </AccordionItem>
-                ))}
-              </Accordion>
-            </div>
-          </Tab>
+                      }
+                    >
+                      <div className="space-y-4">
+                        <div>
+                          <h4 className="font-semibold mb-2">Original (Korean)</h4>
+                          <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded max-h-40 overflow-y-auto">
+                            {chunk.text}
+                          </div>
+                        </div>
 
-          <Tab key="review" title="Review & Edit" isDisabled={project.translation_progress === 0}>
-            <div className="pt-4">
-              {project.translation_progress > 0 ? (
-                <div className="text-center py-12">
-                  <p className="text-lg font-semibold mb-4">Review & Edit Translation</p>
-                  <p className="text-gray-600 mb-6">
-                    Use AI-powered tools to review and refine your translations with advanced editing features.
-                  </p>
-                  <Button 
-                    color="primary" 
-                    size="lg"
-                    startContent={<FiEdit />}
-                    onPress={() => setIsReviewMode(true)}
-                  >
-                    Open Full Screen Editor
-                  </Button>
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <p className="text-gray-500 mb-4">Translation must be completed before review</p>
-                  <Button 
-                    color="primary" 
-                    startContent={<FiPlay />}
-                    onPress={handleStartTranslation}
-                    isDisabled={!project.glossary || activeTask?.status === 'running'}
-                  >
-                    Start Translation
-                  </Button>
-                </div>
-              )}
-            </div>
-          </Tab>
-        </Tabs>
+                        {chunk.translations.final && (
+                          <div>
+                            <h4 className="font-semibold mb-2">
+                              Translation ({project.language === 'ja' ? 'Japanese' : 'English'})
+                            </h4>
+                            <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded max-h-40 overflow-y-auto">
+                              {chunk.translations.final}
+                            </div>
+                          </div>
+                        )}
+
+                        {chunk.translations.qualityScore && (
+                          <div>
+                            <span className="font-semibold">Quality Score: </span>
+                            <Chip
+                              size="sm"
+                              color={
+                                chunk.translations.qualityScore >= 80
+                                  ? 'success'
+                                  : chunk.translations.qualityScore >= 60
+                                    ? 'warning'
+                                    : 'danger'
+                              }
+                            >
+                              {chunk.translations.qualityScore}
+                            </Chip>
+                          </div>
+                        )}
+                      </div>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </div>
+            </Tab>
+
+            <Tab key="review" title="Review & Edit" isDisabled={project.translation_progress === 0}>
+              <div className="pt-4">
+                {project.translation_progress > 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-lg font-semibold mb-4">Review & Edit Translation</p>
+                    <p className="text-gray-600 mb-6">
+                      Use AI-powered tools to review and refine your translations with advanced editing features.
+                    </p>
+                    <Button
+                      color="primary"
+                      size="lg"
+                      startContent={<FiEdit />}
+                      onPress={() => setIsReviewMode(true)}
+                    >
+                      Open Full Screen Editor
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-gray-500 mb-4">Translation must be completed before review</p>
+                    <Button
+                      color="primary"
+                      startContent={<FiPlay />}
+                      onPress={handleStartTranslation}
+                      isDisabled={!project.glossary || activeTask?.status === 'running'}
+                    >
+                      Start Translation
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </Tab>
+          </Tabs>
         </div>
       </div>
 
       {/* Upload/Replace Glossary Modal */}
-      <Modal 
-        isOpen={isUploadGlossaryOpen} 
+      <Modal
+        isOpen={isUploadGlossaryOpen}
         onClose={onUploadGlossaryClose}
         size="3xl"
         scrollBehavior="inside"
@@ -772,7 +778,7 @@ Please upload or generate glossary first.`);
                   Choose File
                 </Button>
               </div>
-              
+
               <Textarea
                 label="Glossary JSON"
                 placeholder='{"characters": [...], "terms": [...], ...}'
@@ -790,8 +796,8 @@ Please upload or generate glossary first.`);
             <Button variant="light" onPress={onUploadGlossaryClose}>
               Cancel
             </Button>
-            <Button 
-              color="primary" 
+            <Button
+              color="primary"
               onPress={handleUploadGlossary}
               isDisabled={!glossaryJson.trim()}
             >
@@ -802,8 +808,8 @@ Please upload or generate glossary first.`);
       </Modal>
 
       {/* Edit Glossary Modal */}
-      <Modal 
-        isOpen={isEditGlossaryOpen} 
+      <Modal
+        isOpen={isEditGlossaryOpen}
         onClose={onEditGlossaryClose}
         size="3xl"
         scrollBehavior="inside"
@@ -815,7 +821,7 @@ Please upload or generate glossary first.`);
               <p className="text-sm text-gray-600">
                 Edit your glossary JSON. Changes will be saved to the project.
               </p>
-              
+
               <Textarea
                 label="Glossary JSON"
                 value={glossaryJson}
@@ -832,8 +838,8 @@ Please upload or generate glossary first.`);
             <Button variant="light" onPress={onEditGlossaryClose}>
               Cancel
             </Button>
-            <Button 
-              color="primary" 
+            <Button
+              color="primary"
               onPress={handleSaveGlossary}
               isDisabled={!glossaryJson.trim()}
             >

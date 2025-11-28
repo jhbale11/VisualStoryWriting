@@ -1,5 +1,6 @@
 import { useTranslationStore } from '../store/TranslationStore';
 import { GlossaryAgent } from '../agents/GlossaryAgent';
+import { PublishAgent } from '../agents/PublishAgent';
 import { TranslationWorkflow } from '../workflow/TranslationWorkflow';
 import { LLMClientFactory } from '../llm/clients';
 
@@ -16,18 +17,18 @@ export class TaskRunner {
     if (this.initialized) {
       return;
     }
-    
+
     this.initialized = true;
-    
+
     // Check for tasks that were running before page refresh
     const store = useTranslationStore.getState();
     const interruptedTasks = Object.values(store.tasks).filter(
       task => task.status === 'running'
     );
-    
+
     if (interruptedTasks.length > 0) {
       console.log(`Found ${interruptedTasks.length} interrupted tasks, marking as pending...`);
-      
+
       // Mark interrupted tasks as pending so they can be manually restarted
       interruptedTasks.forEach(task => {
         store.updateTask(task.id, {
@@ -73,6 +74,9 @@ export class TaskRunner {
           break;
         case 'glossary_extraction':
           await this.runGlossaryExtractionTask(taskId, abortController.signal);
+          break;
+        case 'publish':
+          await this.runPublishTask(taskId, task.projectId, abortController.signal);
           break;
         default:
           throw new Error(`Unknown task type: ${task.type}`);
@@ -151,10 +155,10 @@ export class TaskRunner {
       projectId,
       glossaryKeys: Object.keys(glossary),
     });
-    
+
     store.updateTask(taskId, { progress: 0.9, message: 'Saving glossary...' });
     store.setGlossary(projectId, glossary);
-    
+
     console.log('[TaskRunner] Glossary saved successfully');
   }
 
@@ -198,7 +202,7 @@ export class TaskRunner {
       if (signal.aborted) throw new Error('Task aborted');
 
       const chunk = chunks[i];
-      
+
       if (chunk.status === 'completed') {
         // Skip already completed chunks
         continue;
@@ -294,8 +298,15 @@ export class TaskRunner {
 
     store.updateTask(taskId, { progress: 0.9, message: 'Saving...' });
 
+    // Reconstruct Korean text if paragraph matching was successful
+    let updatedText = chunk.text;
+    if (result.paragraphMatches && result.paragraphMatches.koreanParagraphs) {
+      updatedText = result.paragraphMatches.koreanParagraphs.join('\n\n');
+    }
+
     store.updateChunk(projectId, chunkId, {
       status: 'completed',
+      text: updatedText,
       translations: {
         tagged: result.tagged,
         translated: result.translated,
@@ -314,61 +325,61 @@ export class TaskRunner {
   ): Promise<void> {
     const store = useTranslationStore.getState();
     const task = store.getTask(taskId);
-    
+
     if (!task || !task.metadata) {
       throw new Error('Task metadata not found');
     }
-    
+
     const { text, targetLanguage, vswProjectId } = task.metadata as {
       text: string;
       targetLanguage: 'en' | 'ja';
       vswProjectId: string;
     };
-    
+
     // Import glossary store dynamically
     const { useGlossaryStore, initGemini } = await import('../../model/GlossaryModel');
-    
+
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('VITE_GEMINI_API_KEY not found');
     }
-    
+
     initGemini(apiKey);
-    
+
     store.updateTask(taskId, { progress: 0, message: 'Preparing text...' });
-    
+
     // Split text into chunks
     const chunkSize = 8000;
     const chunks: string[] = [];
     for (let i = 0; i < text.length; i += chunkSize) {
       chunks.push(text.substring(i, i + chunkSize));
     }
-    
+
     const totalChunks = chunks.length;
-    
-    store.updateTask(taskId, { 
-      progress: 0.05, 
-      message: `Processing ${totalChunks} chunks...` 
+
+    store.updateTask(taskId, {
+      progress: 0.05,
+      message: `Processing ${totalChunks} chunks...`
     });
-    
+
     // Reset and initialize glossary store
     useGlossaryStore.getState().reset();
     useGlossaryStore.getState().setTargetLanguage(targetLanguage);
     useGlossaryStore.getState().setFullText(text);
     useGlossaryStore.getState().setTotalChunks(totalChunks);
-    
+
     // Process each chunk
     for (let i = 0; i < chunks.length; i++) {
       if (signal.aborted) throw new Error('Task aborted');
-      
+
       const chunk = chunks[i];
       const progress = 0.05 + ((i + 1) / totalChunks) * 0.85;
-      
-      store.updateTask(taskId, { 
+
+      store.updateTask(taskId, {
         progress,
-        message: `Processing chunk ${i + 1}/${totalChunks}...` 
+        message: `Processing chunk ${i + 1}/${totalChunks}...`
       });
-      
+
       try {
         await useGlossaryStore.getState().processChunk(chunk, i);
       } catch (error) {
@@ -376,34 +387,34 @@ export class TaskRunner {
         // Continue with other chunks even if one fails
       }
     }
-    
+
     if (signal.aborted) throw new Error('Task aborted');
-    
+
     // Consolidate results
-    store.updateTask(taskId, { 
+    store.updateTask(taskId, {
       progress: 0.95,
-      message: 'Consolidating results...' 
+      message: 'Consolidating results...'
     });
-    
+
     try {
       await useGlossaryStore.getState().consolidateResults();
     } catch (error) {
       console.error('Error consolidating results:', error);
     }
-    
+
     // Save to localStorage
-    store.updateTask(taskId, { 
+    store.updateTask(taskId, {
       progress: 0.98,
-      message: 'Saving project...' 
+      message: 'Saving project...'
     });
-    
+
     const glossaryState = useGlossaryStore.getState();
     const raw = localStorage.getItem('vsw.projects') || '[]';
     const arr = JSON.parse(raw);
-    
+
     // Update existing project or create new one
     const existingIndex = arr.findIndex((p: any) => p.id === vswProjectId);
-    
+
     const project = {
       id: vswProjectId,
       name: arr[existingIndex]?.name || `Glossary Project ${new Date().toLocaleString()}`,
@@ -431,20 +442,106 @@ export class TaskRunner {
         relationsPositions: {}
       }
     };
-    
+
     if (existingIndex >= 0) {
       arr[existingIndex] = project;
     } else {
       arr.unshift(project);
     }
-    
+
     localStorage.setItem('vsw.projects', JSON.stringify(arr));
     localStorage.setItem('vsw.currentProjectId', vswProjectId);
-    
-    store.updateTask(taskId, { 
+
+    store.updateTask(taskId, {
       progress: 1,
-      message: 'Glossary extraction completed!' 
+      message: 'Glossary extraction completed!'
     });
+  }
+
+  private async runPublishTask(
+    taskId: string,
+    projectId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    const store = useTranslationStore.getState();
+    const project = await store.getProject(projectId);
+    const task = store.getTask(taskId);
+
+    if (!project) throw new Error('Project not found');
+    if (!task || !task.metadata) throw new Error('Task metadata not found');
+
+    const { prompt, sourceText } = task.metadata as {
+      prompt: string;
+      sourceText: string;
+    };
+
+    store.updateTask(taskId, { progress: 0.1, message: 'Initializing Publish Agent...' });
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) throw new Error('API Key not found');
+
+    const agent = new PublishAgent(apiKey, project.agent_configs.publish || {
+      provider: 'gemini',
+      model: 'gemini-3-pro-preview',
+      temperature: 0.3
+    });
+
+    if (signal.aborted) throw new Error('Task aborted');
+
+    store.updateTask(taskId, { progress: 0.2, message: 'Formatting text...' });
+
+    try {
+      const formattedText = await agent.process(sourceText, prompt, (progress) => {
+        store.updateTask(taskId, {
+          progress: 0.2 + (progress * 0.7),
+          message: 'Processing...'
+        });
+      });
+
+      if (signal.aborted) throw new Error('Task aborted');
+
+      store.updateTask(taskId, { progress: 0.9, message: 'Saving result...' });
+
+      // Update the project with the result
+      // We'll store it in the first chunk's final translation for now, or create a dedicated field if needed.
+      // Since the project structure relies on chunks, let's ensure we have at least one chunk.
+      let chunks = [...project.chunks];
+      if (chunks.length === 0) {
+        chunks = [{
+          id: 'chunk-0',
+          text: sourceText,
+          translations: {},
+          status: 'completed',
+          metadata: { startIndex: 0, endIndex: sourceText.length }
+        }];
+      }
+
+      // Update the first chunk with the result
+      chunks[0] = {
+        ...chunks[0],
+        translations: {
+          ...chunks[0].translations,
+          final: formattedText
+        },
+        status: 'completed'
+      };
+
+      store.updateProject(projectId, {
+        chunks,
+        status: 'translation_completed', // Or a new status 'published'
+        updated_at: new Date().toISOString()
+      });
+
+      store.updateTask(taskId, {
+        progress: 1.0,
+        message: 'Publishing completed successfully',
+        status: 'completed'
+      });
+
+    } catch (error) {
+      console.error('Publish task failed:', error);
+      throw error;
+    }
   }
 
   isTaskRunning(taskId: string): boolean {

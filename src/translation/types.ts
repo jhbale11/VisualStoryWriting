@@ -19,6 +19,7 @@ export interface AgentConfigs {
   quality?: LLMConfig;
   proofreader?: LLMConfig;
   layout?: LLMConfig;
+  publish?: LLMConfig;
 }
 
 // ============== Glossary ==============
@@ -71,7 +72,7 @@ export interface ExtendedGlossary extends BasicGlossary {
 }
 
 // Union type to support both structures
-export type Glossary = BasicGlossary | ExtendedGlossary;
+export type Glossary = BasicGlossary | ExtendedGlossary | string;
 
 // ============== Paragraph Matching ==============
 export interface ParagraphMatch {
@@ -90,6 +91,9 @@ export interface ChunkMetadata {
   chunk_index: number;
   total_chunks: number;
   custom_instruction?: string;
+  startIndex?: number;
+  endIndex?: number;
+  [key: string]: any;
 }
 
 export interface TranslationResult {
@@ -114,7 +118,7 @@ export interface Chunk {
 }
 
 // ============== Project ==============
-export type ProjectStatus = 
+export type ProjectStatus =
   | 'setup'
   | 'glossary_running'
   | 'glossary_completed'
@@ -128,30 +132,30 @@ export interface TranslationProject {
   id: string;
   name: string;
   status: ProjectStatus;
-  type: 'translation' | 'glossary';
+  type: 'translation' | 'glossary' | 'publish';
   created_at: string;
   updated_at: string;
-  
+
   // Source content
   file_content: string;
-  
+
   // Glossary
   glossary?: Glossary;
-  
+
   // Chunks
   chunks: Chunk[];
   chunk_size: number;
   overlap: number;
-  
+
   // Progress
   translation_progress: number;
-  
+
   // Configuration
   max_retries: number;
   enable_proofreader: boolean;
   language: 'en' | 'ja';
   agent_configs: AgentConfigs;
-  
+
   // Custom prompts
   prompts?: {
     translation?: string;
@@ -159,18 +163,20 @@ export interface TranslationProject {
     quality?: string;
     proofreader?: string;
     layout?: string;
+    publish?: string;
   };
 }
 
 // ============== Task Management ==============
-export type TaskType = 
+export type TaskType =
   | 'glossary'
   | 'glossary_extraction'
   | 'translation'
   | 'retranslate'
-  | 'review';
+  | 'review'
+  | 'publish';
 
-export type TaskStatus = 
+export type TaskStatus =
   | 'pending'
   | 'running'
   | 'completed'
@@ -182,9 +188,10 @@ export interface Task {
   type: TaskType;
   status: TaskStatus;
   progress: number;
-  message: string;
+  message?: string;
   projectId: string;
   chunkId?: string;
+  metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -197,7 +204,7 @@ export interface TranslationState {
   glossary?: Glossary;
   chunkMetadata: ChunkMetadata;
   customPrompts?: Record<string, string>;
-  
+
   // Intermediate results
   tagged?: string;
   translated?: string;
@@ -207,16 +214,16 @@ export interface TranslationState {
   proofread?: string;
   final?: string;
   paragraphMatches?: ParagraphMatchResult;
-  
+
   // Control
   retryCount: number;
   maxRetries: number;
   enableProofreader: boolean;
   needsReenhancement?: boolean;
-  
+
   // Error handling
   error?: string;
-  
+
   // Progress tracking
   currentStage?: string;
   llmCalls?: number;
