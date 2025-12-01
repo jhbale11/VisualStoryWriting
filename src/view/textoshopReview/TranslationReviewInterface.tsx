@@ -721,12 +721,16 @@ ${ko}
 ENGLISH TRANSLATION (${en.length} chars):
 ${en}
 
-REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
+REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
 
     setReviewText('Running review...');
     reviewModal.onOpen();
 
-    useModelStore.getState().executePrompt({ prompt, response_format: { zodObject: schema, name: 'review' } }).then((res) => {
+    useModelStore.getState().executePrompt({
+      prompt,
+      model: 'gpt-5.1-2025-11-13',
+      response_format: { zodObject: schema, name: 'review' }
+    }).then((res) => {
       const parsed = res.parsed as { issues: ReviewIssue[] } | undefined;
       console.log('Review result:', parsed);
       console.log('Number of issues:', parsed?.issues?.length || 0);
@@ -1045,12 +1049,16 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
           {/* Review cards positioned next to translation field */}
           {parsedIssues.length > 0 && issuePositions.length > 0 && (() => {
             const trEl = document.getElementById('translationField');
-            if (!trEl) return null;
+            const bgEl = document.getElementById('background');
+            if (!trEl || !bgEl) return null;
 
             const trRect = trEl.getBoundingClientRect();
+            const bgRect = bgEl.getBoundingClientRect();
             const cardWidth = 300;
             const cardMinGap = 12; // Increased from 8 to 16 for better spacing
-            const cardLeft = trRect.right + 16;
+
+            // Calculate left position relative to the background container
+            const cardLeft = trRect.right - bgRect.left + 16;
 
             // Calculate non-overlapping positions
             const adjustedPositions: number[] = [];
@@ -1062,7 +1070,10 @@ REMEMBER: You MUST return AT LEAST 10 issues. Count them before responding.`;
                 return;
               }
 
-              let desiredTop = trRect.top + pos.top - trEl.scrollTop;
+              // Calculate top position relative to the background container
+              // pos.top is relative to the translation field content (including scroll)
+              // We want: (trRect.top + pos.top - trEl.scrollTop) - bgRect.top
+              let desiredTop = (trRect.top + pos.top - trEl.scrollTop) - bgRect.top;
 
               // Ensure minimum gap between cards
               if (adjustedPositions.length > 0 && desiredTop < lastBottom + cardMinGap) {
