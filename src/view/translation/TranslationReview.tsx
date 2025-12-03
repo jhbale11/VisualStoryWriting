@@ -45,11 +45,12 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     return <div>No chunk found</div>;
   }
 
-  const handleSave = (updatedEnglish: string) => {
+  const handleSave = (updatedEnglish: string, updatedMatches?: ParagraphMatchResult) => {
     updateChunk(project.id, currentChunk.id, {
       translations: {
         ...currentChunk.translations,
         final: updatedEnglish,
+        paragraphMatches: updatedMatches || currentChunk.translations.paragraphMatches,
       },
     });
     alert('Changes saved successfully!');

@@ -112,7 +112,7 @@ export class TranslationWorkflow {
     // Add edges
     workflow.addEdge(START, 'translate');
     workflow.addEdge('translate', 'enhance');
-    
+
     // Conditional: quality check decides whether to re-enhance
     workflow.addConditionalEdges(
       'enhance',
@@ -147,7 +147,7 @@ export class TranslationWorkflow {
 
     // After layout, always run matching
     workflow.addEdge('layout', 'matching');
-    
+
     // Matching is the final step
     workflow.addEdge('matching', END);
 

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Button, Divider, Select, SelectItem, Modal, ModalBody, ModalContent, ModalHeader, Textarea, useDisclosure } from '@nextui-org/react';
-import { Editor, Transforms } from 'slate';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Divider, Modal, ModalBody, ModalContent, ModalHeader, Textarea, useDisclosure } from '@nextui-org/react';
+import { Editor, Transforms, Node as SlateNode } from 'slate';
 import { ReactEditor } from 'slate-react';
 import { z } from 'zod';
 import { textFieldEditors, useModelStore } from './model/Model';
@@ -32,7 +32,7 @@ interface TranslationReviewInterfaceProps {
   koreanText: string;
   englishText: string;
   paragraphMatches?: ParagraphMatchResult;
-  onSave: (updatedEnglish: string) => void;
+  onSave: (updatedEnglish: string, updatedMatches?: ParagraphMatchResult) => void;
   onNavigate: (direction: 'prev' | 'next') => void;
   onRetranslate?: () => void;
   isRetranslating?: boolean;
@@ -63,14 +63,238 @@ interface ReviewIssue {
   suggestion?: string;
 }
 
+const PARAGRAPH_SPLIT_REGEX = /\n\n+/;
+
+const normalizeParagraphBreaks = (text: string): string => {
+  if (!text) return '';
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+};
+
+const splitTextIntoParagraphs = (text: string): string[] => {
+  if (!text) {
+    return [];
+  }
+  return text
+    .split(PARAGRAPH_SPLIT_REGEX)
+    .filter(para => para.length > 0);
+};
+
+const computeParagraphRanges = (text: string, paragraphs: string[]): Array<{ start: number; end: number }> => {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let searchIndex = 0;
+  for (const para of paragraphs) {
+    const start = text.indexOf(para, searchIndex);
+    if (start < 0) {
+      ranges.push({ start: -1, end: -1 });
+      continue;
+    }
+    const end = start + para.length;
+    ranges.push({ start, end });
+    const delimiterMatch = text.slice(end).match(/^\n\n+/);
+    searchIndex = end + (delimiterMatch ? delimiterMatch[0].length : 0);
+  }
+  return ranges;
+};
+
+const normalizeParagraph = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+interface ParagraphAnchor {
+  oldIdx: number;
+  newIdx: number;
+}
+
+const buildParagraphAnchors = (oldParas: string[], newParas: string[]): ParagraphAnchor[] => {
+  const oldNorm = oldParas.map(normalizeParagraph);
+  const newNorm = newParas.map(normalizeParagraph);
+  const oldLen = oldNorm.length;
+  const newLen = newNorm.length;
+
+  if (oldLen === 0 || newLen === 0) {
+    return [];
+  }
+
+  const dp: number[][] = Array.from({ length: oldLen + 1 }, () => new Array(newLen + 1).fill(0));
+
+  for (let i = oldLen - 1; i >= 0; i--) {
+    for (let j = newLen - 1; j >= 0; j--) {
+      if (oldNorm[i] === newNorm[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const anchors: ParagraphAnchor[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < oldLen && j < newLen) {
+    if (oldNorm[i] === newNorm[j]) {
+      anchors.push({ oldIdx: i, newIdx: j });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return anchors;
+};
+
+const assignGapMappings = (
+  mapping: Array<number | null>,
+  oldStart: number,
+  oldEnd: number,
+  newStart: number,
+  newEnd: number,
+  prevOld: number,
+  nextOld: number | null
+) => {
+  const newLen = newEnd - newStart;
+  if (newLen <= 0) {
+    return;
+  }
+
+  const oldLen = Math.max(oldEnd - oldStart, 0);
+
+  if (oldLen <= 0) {
+    const fallback = prevOld >= 0 ? prevOld : (nextOld ?? 0);
+    for (let newIdx = newStart; newIdx < newEnd; newIdx++) {
+      mapping[newIdx] = fallback;
+    }
+    return;
+  }
+
+  if (newLen === oldLen) {
+    for (let offset = 0; offset < newLen; offset++) {
+      mapping[newStart + offset] = oldStart + offset;
+    }
+    return;
+  }
+
+  if (newLen > oldLen) {
+    let currentNew = newStart;
+    for (let oldIdx = oldStart; oldIdx < oldEnd; oldIdx++) {
+      const remainingOld = oldEnd - oldIdx;
+      const remainingNew = newEnd - currentNew;
+      const share = Math.max(1, Math.round(remainingNew / remainingOld));
+      for (let assigned = 0; assigned < share && currentNew < newEnd; assigned++) {
+        mapping[currentNew++] = oldIdx;
+      }
+    }
+    while (currentNew < newEnd) {
+      mapping[currentNew++] = oldEnd - 1;
+    }
+    return;
+  }
+
+  for (let newIdx = newStart; newIdx < newEnd; newIdx++) {
+    mapping[newIdx] = oldStart;
+  }
+};
+
+const remapParagraphMatches = (matchResult: ParagraphMatchResult, updatedEnglish: string): ParagraphMatchResult => {
+  const newEnglishParagraphs = splitTextIntoParagraphs(updatedEnglish);
+  const baseEnglishParagraphs = matchResult.englishParagraphs && matchResult.englishParagraphs.length > 0
+    ? matchResult.englishParagraphs
+    : newEnglishParagraphs;
+
+  if (newEnglishParagraphs.length === 0) {
+    return {
+      englishParagraphs: [],
+      koreanParagraphs: matchResult.koreanParagraphs,
+      matches: [],
+    };
+  }
+
+  const anchors = buildParagraphAnchors(baseEnglishParagraphs, newEnglishParagraphs);
+  const mapping: Array<number | null> = new Array(newEnglishParagraphs.length).fill(null);
+
+  let prevOld = -1;
+  let prevNew = -1;
+
+  anchors.forEach((anchor) => {
+    assignGapMappings(
+      mapping,
+      prevOld + 1,
+      anchor.oldIdx,
+      prevNew + 1,
+      anchor.newIdx,
+      prevOld,
+      anchor.oldIdx
+    );
+    mapping[anchor.newIdx] = anchor.oldIdx;
+    prevOld = anchor.oldIdx;
+    prevNew = anchor.newIdx;
+  });
+
+  assignGapMappings(
+    mapping,
+    prevOld + 1,
+    baseEnglishParagraphs.length,
+    prevNew + 1,
+    newEnglishParagraphs.length,
+    prevOld,
+    null
+  );
+
+  const paragraphMap = mapping.map((oldIdx, newIdx) => {
+    if (oldIdx === null || isNaN(oldIdx)) {
+      if (baseEnglishParagraphs.length === 0) {
+        return 0;
+      }
+      return Math.min(Math.max(newIdx, 0), baseEnglishParagraphs.length - 1);
+    }
+    return Math.min(Math.max(oldIdx, 0), baseEnglishParagraphs.length - 1);
+  });
+  const englishToKorean = new Map<number, number>();
+  matchResult.matches.forEach(match => {
+    englishToKorean.set(match.englishIndex, match.koreanIndex);
+  });
+
+  const koreanLength = matchResult.koreanParagraphs.length;
+  const safeKoreanIndex = (idx: number) => {
+    if (koreanLength === 0) return 0;
+    return Math.min(Math.max(idx, 0), koreanLength - 1);
+  };
+
+  const newMatches = paragraphMap.map((oldIdx, newIdx) => {
+    const fallback = safeKoreanIndex(oldIdx);
+    const koreanIndex = englishToKorean.has(oldIdx) ? englishToKorean.get(oldIdx)! : fallback;
+    return {
+      englishIndex: newIdx,
+      koreanIndex: safeKoreanIndex(koreanIndex),
+    };
+  });
+
+  return {
+    englishParagraphs: newEnglishParagraphs,
+    koreanParagraphs: matchResult.koreanParagraphs,
+    matches: newMatches,
+  };
+};
+
+const getEditorPlainText = (): string => {
+  const editor = textFieldEditors['translationField'];
+  if (!editor || !Array.isArray(editor.children)) {
+    return '';
+  }
+  const nodesText = editor.children.map((node: any) => SlateNode.string(node));
+  const rawText = nodesText.join('\n\n');
+  return normalizeParagraphBreaks(rawText);
+};
+
 export default function TranslationReviewInterface(props: TranslationReviewInterfaceProps) {
-  const selectedToolStr = useModelStore(state => state.selectedTool);
   const selectedTool = useModelStore(state => state.getSelectedTool());
   const textFields = useModelStore(state => state.textFields);
   const selectedTexts = useModelStore(state => state.selectedTexts);
   const setSelectedTexts = useModelStore(state => state.setSelectedTexts);
   const sentenceHovered = useViewModelStore(state => state.sentenceHovered);
   const setSentenceHovered = useViewModelStore(state => state.setSentenceHovered);
+  const canonicalEnglishText = useMemo(() => normalizeParagraphBreaks(props.englishText || ''), [props.englishText]);
 
   const [draggedElementId, setDraggedElementId] = useState<string>('');
   const [elementDroppedTimestamp, setElementDroppedTimestamp] = useState<number>(0);
@@ -137,6 +361,27 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const [matchingLines, setMatchingLines] = useState<Array<{ x1: number, y1: number, x2: number, y2: number }>>([]);
   const [activeEnglishParagraphIndex, setActiveEnglishParagraphIndex] = useState<number | null>(null);
 
+  const englishToKoreanMap = useMemo(() => {
+    const map = new Map<number, number>();
+    props.paragraphMatches?.matches.forEach(match => {
+      map.set(match.englishIndex, match.koreanIndex);
+    });
+    return map;
+  }, [props.paragraphMatches]);
+
+  const activeKoreanParagraphIndex = useMemo(() => {
+    if (activeEnglishParagraphIndex === null) {
+      return null;
+    }
+    if (props.paragraphMatches) {
+      if (englishToKoreanMap.has(activeEnglishParagraphIndex)) {
+        return englishToKoreanMap.get(activeEnglishParagraphIndex) ?? null;
+      }
+      return null;
+    }
+    return activeEnglishParagraphIndex;
+  }, [activeEnglishParagraphIndex, props.paragraphMatches, englishToKoreanMap]);
+
   // Get Korean paragraphs (either from paragraphMatches or split by \n\n)
   const koreanParagraphs = props.paragraphMatches
     ? props.paragraphMatches.koreanParagraphs
@@ -148,6 +393,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       setMatchingLines([]);
       return;
     }
+    const matchResult = props.paragraphMatches;
 
     const updateMatchingLines = () => {
       const background = document.getElementById('background');
@@ -166,119 +412,66 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       const editor = textFieldEditors['translationField'];
       if (!editor) return;
 
-      // Safely extract text from editor
-      let englishText = '';
-      try {
-        // Get text from the first paragraph node
-        if (editor.children && editor.children.length > 0) {
-          const firstPara = editor.children[0] as any;
-          if (firstPara && firstPara.children && firstPara.children.length > 0) {
-            englishText = firstPara.children.map((child: any) => child.text || '').join('');
-          }
-        }
-      } catch (e) {
-        console.error('Error extracting text from editor:', e);
-        return;
-      }
-
+      const englishText = getEditorPlainText();
       if (!englishText) {
-        console.log('No text found in editor');
+        setMatchingLines([]);
         return;
       }
 
-      const englishParagraphs = englishText.split(/\n\n+/).filter((p: string) => p.trim().length > 0);
-
+      const englishParagraphs = splitTextIntoParagraphs(englishText);
       console.log('Korean paragraphs:', koreanParas.length);
       console.log('English paragraphs (by \\n\\n):', englishParagraphs.length);
-      console.log('Originally matched:', props.paragraphMatches?.matches.length || 0);
+      console.log('Originally matched:', matchResult?.matches.length || 0);
 
-      // Calculate English paragraph positions by measuring text ranges
+      const paragraphRanges = computeParagraphRanges(englishText, englishParagraphs);
       const englishParaPositions: Array<{ top: number, height: number }> = [];
+      const slateState = editor.children as any;
 
-      // Get the contenteditable element
-      const contentEditable = transField.querySelector('[contenteditable="true"]');
-      if (!contentEditable) return;
-
-      // Find the text node inside Slate editor
-      const findTextNode = (node: Node): Text | null => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          return node as Text;
+      paragraphRanges.forEach((range, i) => {
+        if (range.start < 0) {
+          return;
         }
-        for (let i = 0; i < node.childNodes.length; i++) {
-          const found = findTextNode(node.childNodes[i]);
-          if (found) return found;
-        }
-        return null;
-      };
-
-      const textNode = findTextNode(contentEditable);
-      if (!textNode || !textNode.textContent) {
-        console.log('No text node found in editor');
-        return;
-      }
-
-      // Use Range API to find paragraph positions in the text
-      let currentPos = 0;
-      for (let i = 0; i < englishParagraphs.length; i++) {
-        const paraText = englishParagraphs[i];
-        const paraStart = englishText.indexOf(paraText, currentPos);
-        const paraEnd = paraStart + paraText.length;
-
-        if (paraStart < 0) {
-          console.log(`Paragraph ${i} not found in text`);
-          continue;
-        }
-
-        try {
-          const range = document.createRange();
-          const startOffset = Math.min(paraStart, textNode.textContent.length);
-          const endOffset = Math.min(paraEnd, textNode.textContent.length);
-
-          range.setStart(textNode, startOffset);
-          range.setEnd(textNode, endOffset);
-
-          const rects = range.getClientRects();
-          if (rects.length > 0) {
-            const firstRect = rects[0];
-            const lastRect = rects[rects.length - 1];
-            englishParaPositions.push({
-              top: firstRect.top,
-              height: lastRect.bottom - firstRect.top
-            });
-          } else {
-            console.log(`No rects for paragraph ${i}`);
+        const anchor = SlateUtils.toSlatePoint(slateState, range.start);
+        const focus = SlateUtils.toSlatePoint(slateState, range.end);
+        if (anchor && focus) {
+          try {
+            const domRange = ReactEditor.toDOMRange(editor as any, { anchor, focus } as any);
+            const rects = domRange.getClientRects();
+            if (rects.length > 0) {
+              const firstRect = rects[0];
+              const lastRect = rects[rects.length - 1];
+              englishParaPositions[i] = {
+                top: firstRect.top,
+                height: Math.max(lastRect.bottom - firstRect.top, firstRect.height)
+              };
+            }
+          } catch (e) {
+            console.log(`Error measuring paragraph ${i}:`, e);
           }
-        } catch (e) {
-          console.log(`Error measuring paragraph ${i}:`, e);
         }
-
-        currentPos = paraEnd;
-      }
+      });
 
       console.log('English paragraph positions found:', englishParaPositions.length);
 
-      // Draw lines for matched paragraphs only
-      const matchedCount = Math.min(
-        props.paragraphMatches?.matches.length || 0,
-        koreanParas.length,
-        englishParaPositions.length
-      );
+      const contentEditable = transField.querySelector('[contenteditable="true"]');
+      if (!contentEditable) return;
 
-      for (let i = 0; i < matchedCount; i++) {
-        const koreanPara = koreanParas[i] as HTMLElement;
-        const englishPos = englishParaPositions[i];
-
-        if (koreanPara && englishPos) {
-          const koreanRect = koreanPara.getBoundingClientRect();
-
-          const x1 = koreanRect.right - bgRect.left;
-          const y1 = koreanRect.top + koreanRect.height / 2 - bgRect.top;
-          const x2 = contentEditable.getBoundingClientRect().left - bgRect.left;
-          const y2 = englishPos.top + englishPos.height / 2 - bgRect.top;
-
-          lines.push({ x1, y1, x2, y2 });
+      const matches = matchResult.matches || [];
+      matches.forEach(match => {
+        const koreanPara = koreanParas[match.koreanIndex] as HTMLElement | undefined;
+        const englishPos = englishParaPositions[match.englishIndex];
+        if (!koreanPara || !englishPos) {
+          return;
         }
-      }
+
+        const koreanRect = koreanPara.getBoundingClientRect();
+        const x1 = koreanRect.right - bgRect.left;
+        const y1 = koreanRect.top + koreanRect.height / 2 - bgRect.top;
+        const x2 = contentEditable.getBoundingClientRect().left - bgRect.left;
+        const y2 = englishPos.top + englishPos.height / 2 - bgRect.top;
+
+        lines.push({ x1, y1, x2, y2 });
+      });
 
       console.log('Matching lines drawn:', lines.length);
       setMatchingLines(lines);
@@ -292,7 +485,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       window.clearTimeout(timeoutId);
       window.removeEventListener('resize', updateMatchingLines);
     };
-  }, [props.paragraphMatches, props.koreanText, props.englishText]);
+  }, [props.paragraphMatches, props.koreanText, canonicalEnglishText]);
 
   // Track active English paragraph based on cursor position in text
   useEffect(() => {
@@ -307,46 +500,26 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
           return;
         }
 
-        // Get text from editor safely
-        let text = '';
-        try {
-          if (editor.children && editor.children.length > 0) {
-            const firstPara = editor.children[0] as any;
-            if (firstPara && firstPara.children && firstPara.children.length > 0) {
-              text = firstPara.children.map((child: any) => child.text || '').join('');
-            }
-          }
-        } catch (e) {
-          console.error('Error extracting text:', e);
-          setActiveEnglishParagraphIndex(null);
-          return;
-        }
-
+        const text = getEditorPlainText();
         if (!text) {
           setActiveEnglishParagraphIndex(null);
           return;
         }
 
-        const cursorOffset = selection.anchor.offset || 0;
+        const anchorOffset = SlateUtils.toStrIndex(editor.children as any, selection.anchor);
+        const paragraphs = splitTextIntoParagraphs(text);
+        const ranges = computeParagraphRanges(text, paragraphs);
 
         // Split text by \n\n to find which paragraph the cursor is in
-        const paragraphs = text.split(/\n\n+/).filter((p: string) => p.trim().length > 0);
-
-        let currentPos = 0;
         let foundParaIndex = -1;
 
-        for (let i = 0; i < paragraphs.length; i++) {
-          const paraText = paragraphs[i];
-          const paraStart = text.indexOf(paraText, currentPos);
-          const paraEnd = paraStart + paraText.length;
-
-          if (paraStart >= 0 && cursorOffset >= paraStart && cursorOffset <= paraEnd) {
-            foundParaIndex = i;
-            break;
+        ranges.forEach((range, idx) => {
+          if (range.start >= 0 && anchorOffset >= range.start && anchorOffset <= range.end) {
+            if (foundParaIndex === -1) {
+              foundParaIndex = idx;
+            }
           }
-
-          currentPos = paraEnd;
-        }
+        });
 
         // Only highlight if within matched range
         const matchedCount = props.paragraphMatches.matches.length;
@@ -375,7 +548,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     const englishState = [{
       //@ts-ignore
       type: 'paragraph',
-      children: [{ text: props.englishText }]
+      children: [{ text: canonicalEnglishText }]
     }];
 
     // Create layers with the actual project data
@@ -607,26 +780,19 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const handleSave = () => {
     const editor = textFieldEditors['translationField'];
     if (editor) {
-      // Get the full text (already contains \n\n as actual text)
-      let text = '';
-      try {
-        if (editor.children && editor.children.length > 0) {
-          const firstPara = editor.children[0] as any;
-          if (firstPara && firstPara.children && firstPara.children.length > 0) {
-            text = firstPara.children.map((child: any) => child.text || '').join('');
-          }
-        }
-      } catch (e) {
-        console.error('Error extracting text for save:', e);
+      const text = getEditorPlainText();
+      if (!text) {
+        console.log('No text to save');
         return;
       }
 
       console.log('=== Saving ===');
       console.log('Text length:', text.length);
       console.log('Contains \\n\\n:', text.includes('\n\n'));
-      const paragraphCount = text.split(/\n\n+/).filter((p: string) => p.trim().length > 0).length;
+      const paragraphCount = splitTextIntoParagraphs(text).length;
       console.log('Paragraph count:', paragraphCount);
-      props.onSave(text);
+      const updatedMatches = props.paragraphMatches ? remapParagraphMatches(props.paragraphMatches, text) : undefined;
+      props.onSave(text, updatedMatches);
     }
   };
 
@@ -638,22 +804,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       return;
     }
 
-    // Get the full text (already contains \n\n as actual text)
-    let en = '';
-    try {
-      if (editor.children && editor.children.length > 0) {
-        // Extract text from all children, not just the first paragraph
-        en = editor.children.map((node: any) => {
-          if (node.children && node.children.length > 0) {
-            return node.children.map((child: any) => child.text || '').join('');
-          }
-          return '';
-        }).filter(t => t.length > 0).join('\n\n');
-      }
-    } catch (e) {
-      console.error('Error extracting text for review:', e);
-      return;
-    }
+    const en = getEditorPlainText();
 
     console.log('=== Review Text Extraction ===');
     console.log('Korean text length:', ko.length);
@@ -754,19 +905,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
     if (!trEl) return;
 
     // Get the full text
-    let text = '';
-    try {
-      if (editor.children && editor.children.length > 0) {
-        const firstPara = editor.children[0] as any;
-        if (firstPara && firstPara.children && firstPara.children.length > 0) {
-          text = firstPara.children.map((child: any) => child.text || '').join('');
-        }
-      }
-    } catch (e) {
-      console.error('Error extracting text:', e);
-      return;
-    }
-
+    const text = getEditorPlainText();
     if (!text) return;
 
     const state = editor.children as any;
@@ -818,19 +957,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
     if (!editor) return;
 
     // Get the full text (already contains \n\n as actual text)
-    let text = '';
-    try {
-      if (editor.children && editor.children.length > 0) {
-        const firstPara = editor.children[0] as any;
-        if (firstPara && firstPara.children && firstPara.children.length > 0) {
-          text = firstPara.children.map((child: any) => child.text || '').join('');
-        }
-      }
-    } catch (e) {
-      console.error('Error extracting text for scrollToIssue:', e);
-      return;
-    }
-
+    const text = getEditorPlainText();
     if (!text) return;
 
     let start = issue.start;
@@ -1017,7 +1144,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
             }}
           >
             {koreanParagraphs.map((para: string, idx: number) => {
-              const isActive = activeEnglishParagraphIndex === idx;
+              const isActive = activeKoreanParagraphIndex === idx;
               return (
                 <div
                   key={idx}
@@ -1164,7 +1291,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
           <PromptBox />
 
           {(textMergerMenuPos !== null && sentenceHoveredRects.length > 0) && <Popover offset={20} isOpen={textMergerMenuPos !== null} showArrow={true}
-            shouldCloseOnInteractOutside={(e) => (Date.now() - elementDroppedTimestamp) > 200}
+            shouldCloseOnInteractOutside={() => (Date.now() - elementDroppedTimestamp) > 200}
             onClose={() => { setTextMergerMenuPos(null); setSentenceHovered(null); }}>
             <PopoverTrigger>
               <div style={{ position: 'absolute', zIndex: 99999, left: textMergerMenuPos.x, top: textMergerMenuPos.y }}></div>
