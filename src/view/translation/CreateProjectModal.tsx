@@ -663,7 +663,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         name: name.trim(),
         type: projectType,
         fileContent: fileContent.trim(),
-        chunkSize,
+        chunkSize: projectType === 'publish' ? 10000 : chunkSize,
         overlap,
         maxRetries,
         enableProofreader,

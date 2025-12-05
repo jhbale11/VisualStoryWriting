@@ -19,6 +19,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
 
     // Diff View State
     const [showDiffOnly, setShowDiffOnly] = useState(false);
+    const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
 
     // Download State
     const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
@@ -76,9 +77,13 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
         }
     };
 
+    // Get result for diff view
+    const resultText = project.chunks
+        .map(c => c.translations?.final || '')
+        .join('\n\n');
+
     const handleDownloadClick = () => {
-        const result = project.chunks[0]?.translations?.final || '';
-        if (!result) {
+        if (!resultText) {
             alert('No result to download yet.');
             return;
         }
@@ -87,8 +92,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
     };
 
     const handleDownloadConfirm = () => {
-        const result = project.chunks[0]?.translations?.final || '';
-        const blob = new Blob([result], { type: 'text/plain' });
+        const blob = new Blob([resultText], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -100,8 +104,9 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
         setIsDownloadModalOpen(false);
     };
 
-    // Get result for diff view
-    const resultText = project.chunks[0]?.translations?.final || '';
+    const currentChunk = project.chunks[currentChunkIndex];
+    const chunkOldValue = currentChunk?.text || '';
+    const chunkNewValue = currentChunk?.translations?.final || '';
 
     return (
         <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -190,7 +195,28 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
 
                     <Tab key="diff" title="Result (Diff View)">
                         <Card className="h-full overflow-hidden flex flex-col">
-                            <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center bg-gray-50 dark:bg-gray-800">
+                            <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800">
+                                <div className="flex gap-2 items-center">
+                                    <Button
+                                        size="sm"
+                                        variant="flat"
+                                        onPress={() => setCurrentChunkIndex(Math.max(0, currentChunkIndex - 1))}
+                                        isDisabled={currentChunkIndex === 0}
+                                    >
+                                        Previous Chunk
+                                    </Button>
+                                    <span className="text-sm font-medium mx-2">
+                                        Chunk {currentChunkIndex + 1} / {project.chunks.length}
+                                    </span>
+                                    <Button
+                                        size="sm"
+                                        variant="flat"
+                                        onPress={() => setCurrentChunkIndex(Math.min(project.chunks.length - 1, currentChunkIndex + 1))}
+                                        isDisabled={currentChunkIndex === project.chunks.length - 1}
+                                    >
+                                        Next Chunk
+                                    </Button>
+                                </div>
                                 <div className="flex gap-2">
                                     <Button
                                         size="sm"
@@ -204,11 +230,11 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                 </div>
                             </div>
                             <CardBody className="p-0 flex-1 overflow-hidden relative">
-                                {resultText ? (
+                                {chunkNewValue ? (
                                     <div className="h-full overflow-y-auto">
                                         <ReactDiffViewer
-                                            oldValue={project.file_content}
-                                            newValue={resultText}
+                                            oldValue={chunkOldValue}
+                                            newValue={chunkNewValue}
                                             splitView={false}
                                             showDiffOnly={showDiffOnly}
                                             useDarkTheme={true}
@@ -230,7 +256,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                     </div>
                                 ) : (
                                     <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                                        <p className="text-lg">No result yet</p>
+                                        <p className="text-lg">No result for this chunk yet</p>
                                         <p className="text-sm">Run the agent to generate the formatted text</p>
                                     </div>
                                 )}

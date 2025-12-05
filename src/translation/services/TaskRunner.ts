@@ -442,7 +442,7 @@ export class TaskRunner {
     if (!project) throw new Error('Project not found');
     if (!task || !task.metadata) throw new Error('Task metadata not found');
 
-    const { prompt, sourceText } = task.metadata as {
+    const { prompt } = task.metadata as {
       prompt: string;
       sourceText: string;
     };
@@ -460,47 +460,70 @@ export class TaskRunner {
 
     if (signal.aborted) throw new Error('Task aborted');
 
-    store.updateTask(taskId, { progress: 0.2, message: 'Formatting text...' });
+    // Ensure we have chunks to process
+    let chunks = [...project.chunks];
+    if (chunks.length === 0) {
+      if (task.metadata.sourceText) {
+        chunks = [{
+          id: 'chunk-0',
+          text: task.metadata.sourceText,
+          index: 0,
+          translations: {},
+          status: 'pending',
+          metadata: { chunk_index: 0, total_chunks: 1, startIndex: 0, endIndex: task.metadata.sourceText.length }
+        }];
+      } else {
+        throw new Error('No chunks found to process');
+      }
+    }
+
+    const totalChunks = chunks.length;
+    store.updateTask(taskId, { progress: 0.1, message: `Starting publication for ${totalChunks} chunks...` });
 
     try {
-      const formattedText = await agent.process(sourceText, prompt, (progress) => {
+      for (let i = 0; i < totalChunks; i++) {
+        if (signal.aborted) throw new Error('Task aborted');
+
+        const chunk = chunks[i];
+        const progressBase = 0.1 + ((i / totalChunks) * 0.8);
+
         store.updateTask(taskId, {
-          progress: 0.2 + (progress * 0.7),
-          message: 'Processing...'
+          progress: progressBase,
+          message: `Processing chunk ${i + 1}/${totalChunks}...`
         });
-      });
+
+        store.updateChunk(projectId, chunk.id, { status: 'processing' });
+
+        try {
+          const formattedText = await agent.process(chunk.text, prompt, (chunkProgress) => {
+            const currentTotalProgress = progressBase + (chunkProgress * (0.8 / totalChunks));
+            store.updateTask(taskId, {
+              progress: currentTotalProgress,
+              message: `Processing chunk ${i + 1}/${totalChunks}...`
+            });
+          });
+
+          store.updateChunk(projectId, chunk.id, {
+            status: 'completed',
+            translations: {
+              ...chunk.translations,
+              final: formattedText
+            }
+          });
+
+        } catch (chunkError) {
+          console.error(`Error processing chunk ${i}:`, chunkError);
+          store.updateChunk(projectId, chunk.id, {
+            status: 'failed',
+            error: chunkError instanceof Error ? chunkError.message : 'Publishing failed'
+          });
+        }
+      }
 
       if (signal.aborted) throw new Error('Task aborted');
 
-      store.updateTask(taskId, { progress: 0.9, message: 'Saving result...' });
-
-      // Update the project with the result
-      // We'll store it in the first chunk's final translation for now, or create a dedicated field if needed.
-      // Since the project structure relies on chunks, let's ensure we have at least one chunk.
-      let chunks = [...project.chunks];
-      if (chunks.length === 0) {
-        chunks = [{
-          id: 'chunk-0',
-          text: sourceText,
-          translations: {},
-          status: 'completed',
-          metadata: { startIndex: 0, endIndex: sourceText.length }
-        }];
-      }
-
-      // Update the first chunk with the result
-      chunks[0] = {
-        ...chunks[0],
-        translations: {
-          ...chunks[0].translations,
-          final: formattedText
-        },
-        status: 'completed'
-      };
-
       store.updateProject(projectId, {
-        chunks,
-        status: 'translation_completed', // Or a new status 'published'
+        status: 'translation_completed',
         updated_at: new Date().toISOString()
       });
 
