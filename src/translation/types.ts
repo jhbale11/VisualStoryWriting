@@ -174,7 +174,8 @@ export type TaskType =
   | 'translation'
   | 'retranslate'
   | 'review'
-  | 'publish';
+  | 'publish'
+  | 'publish_chunk';
 
 export type TaskStatus =
   | 'pending'

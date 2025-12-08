@@ -4,6 +4,7 @@ import { PublishAgent } from '../agents/PublishAgent';
 import { TranslationWorkflow } from '../workflow/TranslationWorkflow';
 import { LLMClientFactory } from '../llm/clients';
 import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
+import { DEFAULT_PUBLISH_PROMPT } from '../prompts/defaultPrompts';
 
 export class TaskRunner {
   private runningTasks: Set<string> = new Set();
@@ -79,6 +80,13 @@ export class TaskRunner {
         case 'publish':
           await this.runPublishTask(taskId, task.projectId, abortController.signal);
           break;
+      case 'publish_chunk':
+        if (task.chunkId) {
+          await this.runPublishChunkTask(taskId, task.projectId, task.chunkId, abortController.signal);
+        } else {
+          throw new Error('Chunk ID required for publish chunk task');
+        }
+        break;
         default:
           throw new Error(`Unknown task type: ${task.type}`);
       }
@@ -535,6 +543,71 @@ export class TaskRunner {
 
     } catch (error) {
       console.error('Publish task failed:', error);
+      throw error;
+    }
+  }
+
+  private async runPublishChunkTask(
+    taskId: string,
+    projectId: string,
+    chunkId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    const store = useTranslationStore.getState();
+    const project = await store.getProject(projectId);
+    const task = store.getTask(taskId);
+
+    if (!project) throw new Error('Project not found');
+    if (!task) throw new Error('Task not found');
+
+    const chunk = project.chunks.find(c => c.id === chunkId);
+    if (!chunk) throw new Error('Chunk not found');
+
+    const prompt =
+      (task.metadata as { prompt?: string } | undefined)?.prompt ||
+      project.prompts?.publish ||
+      DEFAULT_PUBLISH_PROMPT;
+
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) throw new Error('API Key not found');
+
+    const agent = new PublishAgent(apiKey, project.agent_configs.publish || {
+      provider: 'gemini',
+      model: 'gemini-3-pro-preview',
+      temperature: 0.3
+    });
+
+    const chunkLabel = (chunk.metadata?.chunk_index ?? chunk.index ?? 0) + 1;
+    store.updateTask(taskId, { progress: 0.1, message: `Reprocessing chunk ${chunkLabel}...` });
+    store.updateChunk(projectId, chunkId, { status: 'processing' });
+
+    try {
+      const formattedText = await agent.process(chunk.text, prompt, (chunkProgress) => {
+        store.updateTask(taskId, {
+          progress: 0.1 + chunkProgress * 0.8,
+          message: `Reprocessing chunk ${chunkLabel}...`
+        });
+      });
+
+      store.updateChunk(projectId, chunkId, {
+        status: 'completed',
+        translations: {
+          ...chunk.translations,
+          final: formattedText
+        },
+        error: undefined
+      });
+
+      store.updateTask(taskId, {
+        progress: 1.0,
+        message: `Chunk ${chunkLabel} reprocessed`
+      });
+    } catch (error) {
+      console.error(`Publish chunk task failed for chunk ${chunkId}:`, error);
+      store.updateChunk(projectId, chunkId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Publishing failed'
+      });
       throw error;
     }
   }

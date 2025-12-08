@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Card, CardBody, CardHeader, Divider, Textarea, Spinner, Tabs, Tab, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from '@nextui-org/react';
-import { FiArrowLeft, FiPlay, FiDownload, FiSave, FiSettings, FiEye, FiEyeOff } from 'react-icons/fi';
+import { FiArrowLeft, FiPlay, FiDownload, FiSave, FiSettings, FiEye, FiEyeOff, FiRefreshCw } from 'react-icons/fi';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import { TranslationProject } from '../../translation/types';
 import { DEFAULT_PUBLISH_PROMPT } from '../../translation/prompts/defaultPrompts';
@@ -28,7 +28,10 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
     // Find active task for this project
     useEffect(() => {
         const activeTask = Object.values(tasks).find(
-            t => t.projectId === project.id && t.type === 'publish' && t.status === 'running'
+            t =>
+                t.projectId === project.id &&
+                (t.type === 'publish' || t.type === 'publish_chunk') &&
+                t.status === 'running'
         );
         if (activeTask) {
             setIsRunning(true);
@@ -107,6 +110,37 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
     const currentChunk = project.chunks[currentChunkIndex];
     const chunkOldValue = currentChunk?.text || '';
     const chunkNewValue = currentChunk?.translations?.final || '';
+    const runningChunkTask = currentChunk
+        ? Object.values(tasks).find(
+            t =>
+                t.projectId === project.id &&
+                t.chunkId === currentChunk.id &&
+                t.type === 'publish_chunk' &&
+                t.status === 'running'
+        )
+        : undefined;
+    const isChunkRerunning = !!runningChunkTask;
+
+    const handleRerunChunk = async () => {
+        if (!currentChunk || isChunkRerunning) return;
+
+        try {
+            const taskId = createTask({
+                type: 'publish_chunk',
+                projectId: project.id,
+                chunkId: currentChunk.id,
+                metadata: {
+                    prompt: prompt
+                }
+            });
+
+            setActiveTab('diff');
+            await taskRunner.runTask(taskId);
+        } catch (error) {
+            console.error('Failed to rerun publish agent for chunk:', error);
+            alert('Failed to rerun this chunk. Please try again.');
+        }
+    };
 
     return (
         <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -227,6 +261,20 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                     >
                                         {showDiffOnly ? 'Diffs Only' : 'Show All'}
                                     </Button>
+                                    <Button
+                                        size="sm"
+                                        color="primary"
+                                        variant="flat"
+                                        startContent={
+                                            isChunkRerunning
+                                                ? <Spinner size="sm" color="white" />
+                                                : <FiRefreshCw />
+                                        }
+                                        onPress={handleRerunChunk}
+                                        isDisabled={!currentChunk || isChunkRerunning || isRunning}
+                                    >
+                                        {isChunkRerunning ? 'Re-running...' : 'Re-run this chunk'}
+                                    </Button>
                                 </div>
                             </div>
                             <CardBody className="p-0 flex-1 overflow-hidden relative">
@@ -258,6 +306,22 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                     <div className="flex flex-col items-center justify-center h-full text-gray-500">
                                         <p className="text-lg">No result for this chunk yet</p>
                                         <p className="text-sm">Run the agent to generate the formatted text</p>
+                                        <Button
+                                            className="mt-3"
+                                            color="primary"
+                                            startContent={
+                                                isChunkRerunning
+                                                    ? <Spinner size="sm" color="white" />
+                                                    : <FiRefreshCw />
+                                            }
+                                            onPress={handleRerunChunk}
+                                            isDisabled={!currentChunk || isChunkRerunning || isRunning}
+                                        >
+                                            {isChunkRerunning ? 'Re-running chunk...' : 'Re-run just this chunk'}
+                                        </Button>
+                                        <p className="text-xs text-gray-400 mt-2">
+                                            Useful when some chunks returned empty output
+                                        </p>
                                     </div>
                                 )}
                             </CardBody>
