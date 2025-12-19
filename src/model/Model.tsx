@@ -4,8 +4,6 @@ import OpenAI from 'openai';
 import { Descendant, Node as SlateNode } from 'slate';
 import { create } from 'zustand';
 import { shallow } from 'zustand/shallow';
-import { useStudyStore } from '../study/StudyModel';
-import { dataTextD } from '../study/data/TextD';
 import { globalEditor } from '../view/TextEditor';
 import { useHistoryModelStore } from './HistoryModel';
 import { SlateUtils } from './SlateUtils';
@@ -266,7 +264,6 @@ export const useModelStore = create<ModelState & ModelAction>()((set, get) => ({
                 }
             }
             if (modified) set((state) => ({ actionEdges: allEdges }));
-            useStudyStore.getState().logEvent("EDGES_SELECTED", { edges });
             set((state) => ({ selectedEdges: edges }));
         }
     },

@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Card, CardBody, CardHeader, Button, Chip } from '@nextui-org/react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
-import { restoreGlossarySnapshot, useGlossaryStore } from '../../model/GlossaryModel';
-import { applyViewSnapshot } from '../../glossary/utils/viewSnapshots';
 import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
 import type { GlossaryProjectRecord } from '../../glossary/types';
 
@@ -43,27 +41,10 @@ export const GlossaryProjectList: React.FC<GlossaryProjectListProps> = ({ onProj
     }
   }, [tasks, loadProjects]);
 
-  const preloadProject = useCallback(async (projectId: string) => {
-    try {
-      const project = await glossaryProjectStorage.getProject(projectId);
-      if (project?.glossary) {
-        restoreGlossarySnapshot(project.glossary, {
-          fullTextFallback: project.glossary.fullText || '',
-        });
-      } else {
-        useGlossaryStore.getState().reset();
-      }
-      applyViewSnapshot(project?.view);
-    } catch (error) {
-      console.error('[GlossaryProjectList] Failed to preload project', error);
-      useGlossaryStore.getState().reset();
-    }
-  }, []);
-
   const openProject = (projectId: string) => {
-    preloadProject(projectId);
+    // Go to setup screen first (progress + raw chunks), then user can open the full interface.
     localStorage.setItem('vsw.currentProjectId', projectId);
-    window.location.hash = '/glossary-builder';
+    window.location.hash = `/glossary-project/${projectId}`;
   };
 
   const deleteProject = (projectId: string) => {

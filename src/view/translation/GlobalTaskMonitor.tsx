@@ -54,6 +54,8 @@ export const GlobalTaskMonitor: React.FC = () => {
       case 'glossary_extraction': return '📖 Glossary Build';
       case 'translation': return '🌐 Translation';
       case 'retranslate': return '🔄 Retranslate';
+      case 'match_paragraphs': return '🧩 Match Paragraphs';
+      case 'review_chunk': return '✅ Review (Chunk)';
       case 'review': return '✅ Review';
       default: return type;
     }

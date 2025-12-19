@@ -2,12 +2,27 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { SystemMessage, HumanMessage } from '@langchain/core/messages';
 import type { Glossary } from '../types';
 
-const GLOSSARY_PROMPT = `You are an expert in analyzing Korean novels and creating comprehensive glossaries for translation.
+function getGlossaryPrompt(targetLanguage: 'en' | 'ja') {
+  const languageDirective = targetLanguage === 'ja'
+    ? `TARGET LANGUAGE: Japanese (日本語)
+- Write translation fields in Japanese.
+- Keep Korean keys (original surface forms) in Korean.`
+    : `TARGET LANGUAGE: English
+- Write translation fields in English.
+- Keep Korean keys (original surface forms) in Korean.`;
+
+  return `You are an expert in analyzing Korean novels and creating comprehensive glossaries for translation.
+
+${languageDirective}
 
 Analyze the provided Korean text and extract:
 1. Characters (characters) - Korean name as key, with english, age, gender, personality, tone, honorifics
 2. Terms (terms) - Important terminology, items, abilities, ranks
 3. Places (places) - Locations mentioned in the text
+
+IMPORTANT (entity resolution readiness):
+- For each entry, include optional "aliases": an array of alternate surface forms observed (nicknames, titles, different spellings).
+- Include optional "evidence": 1-2 short quotes/snippets from the text that support the entry.
 
 Return ONLY a valid JSON object with this structure:
 {
@@ -18,24 +33,31 @@ Return ONLY a valid JSON object with this structure:
       "gender": "male",
       "personality": "brave and determined",
       "tone": "casual but respectful",
-      "honorifics": "hyung to older males"
+      "honorifics": "hyung to older males",
+      "aliases": ["민수", "김 군"],
+      "evidence": ["..."]
     }
   },
   "terms": {
     "마물": {
       "english": "demonic beast",
-      "description": "corrupted creatures"
+      "description": "corrupted creatures",
+      "aliases": ["괴물"],
+      "evidence": ["..."]
     }
   },
   "places": {
     "서울": {
       "english": "Seoul",
-      "description": "Capital city"
+      "description": "Capital city",
+      "aliases": ["서울시"],
+      "evidence": ["..."]
     }
   }
 }
 
 Be thorough and extract all relevant information.`;
+}
 
 export class GlossaryAgent {
   constructor(
@@ -45,7 +67,7 @@ export class GlossaryAgent {
 
   async analyzeText(text: string): Promise<Glossary> {
     const messages = [
-      new SystemMessage(GLOSSARY_PROMPT),
+      new SystemMessage(getGlossaryPrompt(this.targetLanguage)),
       new HumanMessage(`Analyze this Korean text and extract glossary information:\n\n${text}`),
     ];
 
@@ -75,7 +97,11 @@ export class GlossaryAgent {
   }
 
   private normalizeGlossary(glossary: any): Glossary {
-    const normalized: Glossary = {
+    const normalized: {
+      characters: Record<string, any>;
+      terms: Record<string, any>;
+      places: Record<string, any>;
+    } = {
       characters: {},
       terms: {},
       places: {},
@@ -94,6 +120,8 @@ export class GlossaryAgent {
             personality: char.personality,
             tone: char.tone,
             honorifics: char.honorifics,
+            aliases: char.aliases,
+            evidence: char.evidence,
           };
         }
       }
@@ -107,6 +135,8 @@ export class GlossaryAgent {
           normalized.terms[key] = {
             english: term.english || key,
             description: term.description,
+            aliases: term.aliases,
+            evidence: term.evidence,
           };
         }
       }
@@ -120,12 +150,14 @@ export class GlossaryAgent {
           normalized.places[key] = {
             english: place.english || key,
             description: place.description,
+            aliases: place.aliases,
+            evidence: place.evidence,
           };
         }
       }
     }
 
-    return normalized;
+    return normalized as Glossary;
   }
 }
 

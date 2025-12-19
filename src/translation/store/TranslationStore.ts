@@ -45,6 +45,7 @@ interface TranslationStore {
       proofreader?: string;
       layout?: string;
       publish?: string;
+      review?: string;
     };
   }) => string;
 
@@ -161,6 +162,68 @@ const createChunks = (text: string, chunkSize: number, overlap: number): Chunk[]
 const isProjectCompleted = (project: TranslationProject): boolean => {
   const completedStatuses = ['glossary_completed', 'translation_completed', 'review_completed'];
   return completedStatuses.includes(project.status);
+};
+
+const LOCAL_CHUNK_WINDOW_RADIUS = 1; // keep current chunk ±1 in localStorage
+const MAX_WINDOW_CHUNKS = LOCAL_CHUNK_WINDOW_RADIUS * 2 + 1;
+
+const trimTranslationsForPersist = (translations: any, keepFull: boolean) => {
+  if (!keepFull || !translations) return {};
+  const { translated, enhanced, proofread, final, paragraphMatches, qualityScore } = translations;
+  return { translated, enhanced, proofread, final, paragraphMatches, qualityScore };
+};
+
+const chooseWindowCenter = (project: TranslationProject, selectedChunkId?: string): number => {
+  if (selectedChunkId) {
+    const hit = project.chunks.find(c => c.id === selectedChunkId);
+    if (hit) return hit.index;
+  }
+  const processing = project.chunks.find(c => c.status === 'processing');
+  if (processing) return processing.index;
+  const pending = project.chunks.find(c => c.status === 'pending');
+  if (pending) return pending.index;
+  return Math.max(0, project.chunks.findIndex(c => c.status === 'completed'));
+};
+
+const buildPersistedChunks = (project: TranslationProject, selectedChunkId?: string): Chunk[] => {
+  const center = chooseWindowCenter(project, selectedChunkId);
+  const windowIndices = new Set<number>();
+  for (let offset = -LOCAL_CHUNK_WINDOW_RADIUS; offset <= LOCAL_CHUNK_WINDOW_RADIUS; offset++) {
+    const idx = center + offset;
+    if (idx >= 0 && idx < project.chunks.length) {
+      windowIndices.add(idx);
+    }
+  }
+
+  let kept = 0;
+  return project.chunks.map(chunk => {
+    const inWindow = windowIndices.has(chunk.index) && kept < MAX_WINDOW_CHUNKS;
+    if (inWindow) kept++;
+    return {
+      ...chunk,
+      // Keep only minimal data for non-window chunks to avoid quota issues
+      text: inWindow ? chunk.text : '',
+      translations: trimTranslationsForPersist(chunk.translations, inWindow),
+      draft_final: inWindow ? chunk.draft_final : undefined,
+      error: inWindow ? chunk.error : undefined,
+    };
+  });
+};
+
+const stripProjectForPersist = (project: TranslationProject, selectedChunkId?: string): TranslationProject => {
+  return {
+    ...project,
+    // Strip large fields to shrink localStorage usage
+    file_content: '',
+    chunks: buildPersistedChunks(project, selectedChunkId),
+  };
+};
+
+const hasFullChunkSet = (project?: TranslationProject): boolean => {
+  if (!project || !project.chunks || project.chunks.length === 0) return false;
+  const declaredTotal = project.chunks[0]?.metadata?.total_chunks;
+  if (declaredTotal && project.chunks.length < declaredTotal) return false;
+  return true;
 };
 
 // Helper function to clean up old storage if it's too large
@@ -338,33 +401,47 @@ export const useTranslationStore = create<TranslationStore>()(
       },
 
       getProject: async (projectId) => {
-        // First check active projects
-        const activeProject = get().projects.find(p => p.id === projectId);
-        if (activeProject) {
+        // Prefer hydrated projects in memory
+        const state = get();
+        const activeProject = state.projects.find(p => p.id === projectId);
+        if (activeProject && hasFullChunkSet(activeProject)) {
           return activeProject;
         }
 
-        // Then check archived projects
-        const archivedProject = get().archivedProjects.find(p => p.id === projectId);
-        if (archivedProject) {
+        const archivedProject = state.archivedProjects.find(p => p.id === projectId);
+        if (archivedProject && hasFullChunkSet(archivedProject)) {
           return archivedProject;
         }
 
-        // Finally, try to load from IndexedDB
+        // Fetch full copy from IndexedDB if local copy is trimmed or missing
         try {
           const dbProject = await browserStorage.getProject(projectId);
           if (dbProject) {
-            // Add to archived projects cache
-            set(state => ({
-              archivedProjects: [...state.archivedProjects, dbProject],
-            }));
+            set(s => {
+              const updateList = (list: TranslationProject[]) =>
+                list.some(p => p.id === projectId)
+                  ? list.map(p => (p.id === projectId ? dbProject : p))
+                  : list;
+
+              const inActive = s.projects.some(p => p.id === projectId);
+              const inArchived = s.archivedProjects.some(p => p.id === projectId);
+
+              if (inActive) {
+                return { projects: updateList(s.projects) };
+              }
+              if (inArchived) {
+                return { archivedProjects: updateList(s.archivedProjects) };
+              }
+              return { archivedProjects: [...s.archivedProjects, dbProject] };
+            });
             return dbProject;
           }
         } catch (error) {
           console.error('[TranslationStore] Failed to get project from IndexedDB:', error);
         }
 
-        return undefined;
+        // Return trimmed copy as a last resort
+        return activeProject || archivedProject || undefined;
       },
 
       selectProject: (projectId) => {
@@ -615,8 +692,11 @@ export const useTranslationStore = create<TranslationStore>()(
       name: 'translation-storage',
       partialize: (state) => ({
         // Only store active (non-completed) projects to prevent storage quota issues
-        projects: state.projects.filter(p => !isProjectCompleted(p)),
+        projects: state.projects
+          .filter(p => !isProjectCompleted(p))
+          .map(p => stripProjectForPersist(p, state.selectedChunkId)),
         selectedProjectId: state.selectedProjectId,
+        selectedChunkId: state.selectedChunkId,
         view: state.view,
         showArchived: state.showArchived,
         // Don't persist tasks - they are runtime state and can contain large metadata
@@ -643,16 +723,16 @@ export const useTranslationStore = create<TranslationStore>()(
             const dbProjects = await browserStorage.listProjects({ includeArchived: false });
             console.log('[TranslationStore] Loaded', dbProjects.length, 'active projects from IndexedDB');
 
-            // Merge with localStorage projects (avoid duplicates)
-            const existingIds = new Set(state.projects.map(p => p.id));
-            const newProjects = dbProjects.filter(p => !existingIds.has(p.id));
+            // Merge with localStorage projects, but prefer DB versions to keep full chunk data
+            const merged = new Map<string, TranslationProject>();
+            state.projects.forEach(p => merged.set(p.id, p));
+            dbProjects.forEach(p => merged.set(p.id, p)); // DB overwrites window-trimmed copies
 
-            if (newProjects.length > 0) {
-              console.log('[TranslationStore] Adding', newProjects.length, 'projects from IndexedDB:',
-                newProjects.map(p => ({ id: p.id, name: p.name })));
-              state.projects = [...state.projects, ...newProjects];
-            } else if (dbProjects.length > 0) {
-              console.log('[TranslationStore] All DB projects already in localStorage, no new projects to add');
+            state.projects = Array.from(merged.values());
+
+            // Ensure selected project exists after merge
+            if (state.selectedProjectId && !merged.has(state.selectedProjectId)) {
+              state.selectedProjectId = undefined;
             }
           } catch (error) {
             console.error('[TranslationStore] Failed to load projects from IndexedDB:', error);

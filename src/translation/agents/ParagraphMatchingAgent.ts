@@ -21,8 +21,11 @@ export class ParagraphMatchingAgent {
 
   /**
    * Match Korean paragraphs to English paragraphs
-   * English text is the reference (split by \n\n)
-   * Korean text needs to be split to match English paragraphs
+   * Goal: align Korean to the English paragraph layout.
+   * Returns:
+   * - englishParagraphs: EN paragraphs (split by \n\n, fallback to \n)
+   * - koreanParagraphs: KR paragraphs aligned to EN paragraph count (same length)
+   * - unmatchedKorean: KR segments that cannot be aligned to any EN paragraph (likely omissions)
    */
   async matchParagraphs(koreanText: string, englishText: string): Promise<ParagraphMatchResult> {
     // Split English text by double newlines
@@ -45,14 +48,18 @@ export class ParagraphMatchingAgent {
       throw new Error('No paragraphs found in English text');
     }
 
-    // Create prompt for matching
+    // Create prompt for alignment/splitting KR to EN layout (plus unmatched KR)
     const prompt = this.createMatchingPrompt(koreanText, englishParagraphs);
 
     try {
       console.log('Invoking paragraph matching model...');
       const response = await this.model.invoke(prompt);
       console.log('Model response received');
-      const result = this.parseMatchingResult(response.content as string, englishParagraphs);
+      const result = this.parseMatchingResult(
+        response.content as string,
+        koreanText,
+        englishParagraphs
+      );
 
       return result;
     } catch (error) {
@@ -71,17 +78,21 @@ export class ParagraphMatchingAgent {
 
     return `You are a precise paragraph alignment expert for Korean-to-English translations.
 
-TASK: Given the Korean source text and English translation paragraphs (already split by \\n\\n), your job is to:
-1. Split the Korean text into the SAME NUMBER of paragraphs as the English text
-2. Each Korean paragraph should correspond to exactly one English paragraph
-3. Return the Korean paragraphs in order, maintaining the 1:1 correspondence
+TASK: Given the Korean SOURCE TEXT and the English translation paragraphs (already split by \\n\\n), your job is to:
+1) Split/segment the Korean text so that it matches the ENGLISH paragraph layout (same number of paragraphs)
+2) If some Korean content appears to be omitted in the English translation, put that Korean text into "unmatchedKorean"
 
 IMPORTANT RULES:
-- The number of Korean paragraphs MUST equal the number of English paragraphs (${englishParagraphs.length})
-- Preserve the sequential order - KR paragraph [i] matches EN paragraph [i]
-- Split Korean text at appropriate sentence boundaries to match the content flow
-- If Korean text naturally has different breaks, adjust to match English structure
-- Do NOT translate or modify text - only split into paragraphs
+- DO NOT translate. Return Korean text only in koreanParagraphs/unmatchedKorean.
+- The "koreanParagraphs" array MUST have EXACTLY ${englishParagraphs.length} items (same count/order as EN).
+- Every character of the Korean source must appear EITHER in koreanParagraphs OR unmatchedKorean. NO omissions.
+- Preserve original order.
+- For each index i: koreanParagraphs[i] should be the Korean slice corresponding to [EN-i]. It can be empty if truly no corresponding Korean.
+- unmatchedKorean items are Korean slices that do not correspond to any EN paragraph (likely omitted). Keep them in-order.
+- unmatchedKorean.beforeEnglishIndex is an integer from 0..${englishParagraphs.length} indicating where the unmatched text should be displayed:
+  - 0: before EN-0
+  - k: between EN-(k-1) and EN-k
+  - ${englishParagraphs.length}: after EN-${englishParagraphs.length - 1}
 
 ENGLISH PARAGRAPHS (${englishParagraphs.length} paragraphs):
 ${englishParagraphsText}
@@ -90,22 +101,18 @@ KOREAN SOURCE TEXT:
 ${koreanText}
 
 OUTPUT FORMAT (JSON):
-Return a JSON object with exactly ${englishParagraphs.length} Korean paragraphs in the "paragraphs" array:
+Return a JSON object:
 {
-  "paragraphs": [
-    "Korean paragraph 0 text here",
-    "Korean paragraph 1 text here",
-    ...
-  ]
+  "koreanParagraphs": [ "...", "...", ... ], // length exactly ${englishParagraphs.length}
+  "unmatchedKorean": [ { "beforeEnglishIndex": 0, "text": "..." } ] // optional
 }
-
-The order matters: paragraphs[0] corresponds to [EN-0], paragraphs[1] to [EN-1], etc.
 
 Return ONLY the JSON object, no other text.`;
   }
 
   private parseMatchingResult(
     content: string,
+    koreanText: string,
     englishParagraphs: string[]
   ): ParagraphMatchResult {
     try {
@@ -117,39 +124,52 @@ Return ONLY the JSON object, no other text.`;
 
       const parsed = JSON.parse(jsonMatch[0]);
 
-      if (!parsed.paragraphs || !Array.isArray(parsed.paragraphs)) {
-        throw new Error('Invalid response format: missing paragraphs array');
+      if (!parsed.koreanParagraphs || !Array.isArray(parsed.koreanParagraphs)) {
+        throw new Error('Invalid response format: missing koreanParagraphs array');
       }
 
-      const koreanParagraphs: string[] = parsed.paragraphs;
-
-      // Validate that we have the same number of paragraphs
-      if (koreanParagraphs.length !== englishParagraphs.length) {
-        console.warn(
-          `Paragraph count mismatch: English=${englishParagraphs.length}, Korean=${koreanParagraphs.length}`
-        );
-
-        // Try to adjust if close
-        if (koreanParagraphs.length < englishParagraphs.length) {
-          // Pad with empty paragraphs
-          while (koreanParagraphs.length < englishParagraphs.length) {
-            koreanParagraphs.push('');
-          }
+      let alignedKorean: string[] = parsed.koreanParagraphs.map((x: any) => String(x ?? ''));
+      if (alignedKorean.length !== englishParagraphs.length) {
+        console.warn(`ParagraphMatchingAgent: alignedKorean length mismatch EN=${englishParagraphs.length}, KRAligned=${alignedKorean.length}`);
+        if (alignedKorean.length < englishParagraphs.length) {
+          while (alignedKorean.length < englishParagraphs.length) alignedKorean.push('');
         } else {
-          // Truncate extra paragraphs
-          koreanParagraphs.splice(englishParagraphs.length);
+          alignedKorean = alignedKorean.slice(0, englishParagraphs.length);
         }
       }
 
-      // Create 1:1 matches (index to index)
+      const unmatchedRaw = Array.isArray(parsed.unmatchedKorean) ? parsed.unmatchedKorean : [];
+      const unmatchedKorean: Array<{ beforeEnglishIndex: number; text: string }> = unmatchedRaw
+        .map((u: any) => ({
+          beforeEnglishIndex: typeof u?.beforeEnglishIndex === 'number' ? u.beforeEnglishIndex : englishParagraphs.length,
+          text: String(u?.text ?? ''),
+        }))
+        .filter(u => u.text.trim().length > 0)
+        .map(u => ({
+          beforeEnglishIndex: Math.min(Math.max(u.beforeEnglishIndex, 0), englishParagraphs.length),
+          text: u.text,
+        }));
+
+      // Safety: if the model omitted too much KR, fall back to showing everything as unmatched at the top.
+      const normalize = (s: string) => s.replace(/\s+/g, '');
+      const originalLen = normalize(koreanText).length;
+      const reconstructedLen = normalize(alignedKorean.join('') + unmatchedKorean.map(u => u.text).join('')).length;
+      if (originalLen > 0 && reconstructedLen < originalLen * 0.75) {
+        console.warn('ParagraphMatchingAgent: reconstruction coverage too low, falling back to unmatchedKorean=full source');
+        alignedKorean = new Array(englishParagraphs.length).fill('');
+        unmatchedKorean.length = 0;
+        unmatchedKorean.push({ beforeEnglishIndex: 0, text: koreanText });
+      }
+
       const matches: ParagraphMatch[] = englishParagraphs.map((_, idx) => ({
         englishIndex: idx,
-        koreanIndex: idx,
+        koreanIndex: idx, // aligned 1:1 by row
       }));
 
       return {
         englishParagraphs,
-        koreanParagraphs,
+        koreanParagraphs: alignedKorean,
+        unmatchedKorean,
         matches,
       };
     } catch (error) {

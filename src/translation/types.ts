@@ -19,6 +19,7 @@ export interface AgentConfigs {
   quality?: LLMConfig;
   proofreader?: LLMConfig;
   layout?: LLMConfig;
+  review?: LLMConfig;
   publish?: LLMConfig;
 }
 
@@ -82,8 +83,26 @@ export interface ParagraphMatch {
 
 export interface ParagraphMatchResult {
   englishParagraphs: string[];
+  // Korean paragraphs aligned to the EN paragraph layout (same length as englishParagraphs)
   koreanParagraphs: string[];
+  // Korean segments that could not be aligned to any EN paragraph (likely omitted in translation).
+  // beforeEnglishIndex=0 means before EN-0, beforeEnglishIndex=N means after the last EN paragraph.
+  unmatchedKorean?: Array<{ beforeEnglishIndex: number; text: string }>;
   matches: ParagraphMatch[];
+}
+
+// ============== Review (QA) ==============
+export type ReviewSeverity = 'high' | 'medium' | 'low';
+
+export interface ReviewIssue {
+  start?: number;
+  end?: number;
+  text?: string;
+  category: string;
+  subcategory?: string;
+  severity: ReviewSeverity;
+  message: string;
+  suggestion?: string;
 }
 
 // ============== Chunk ==============
@@ -104,6 +123,7 @@ export interface TranslationResult {
   final?: string;
   qualityScore?: number;
   paragraphMatches?: ParagraphMatchResult;
+  reviewIssues?: ReviewIssue[];
 }
 
 export interface Chunk {
@@ -163,6 +183,7 @@ export interface TranslationProject {
     quality?: string;
     proofreader?: string;
     layout?: string;
+    review?: string;
     publish?: string;
   };
 }
@@ -174,6 +195,8 @@ export type TaskType =
   | 'translation'
   | 'retranslate'
   | 'review'
+  | 'review_chunk'
+  | 'match_paragraphs'
   | 'publish'
   | 'publish_chunk';
 
@@ -202,6 +225,7 @@ export interface Task {
 export interface TranslationState {
   // Input
   sourceText: string;
+  previousContext?: string;
   glossary?: Glossary;
   chunkMetadata: ChunkMetadata;
   customPrompts?: Record<string, string>;
@@ -215,6 +239,7 @@ export interface TranslationState {
   proofread?: string;
   final?: string;
   paragraphMatches?: ParagraphMatchResult;
+  reviewIssues?: ReviewIssue[];
 
   // Control
   retryCount: number;

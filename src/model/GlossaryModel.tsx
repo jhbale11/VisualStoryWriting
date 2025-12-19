@@ -2,8 +2,9 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { create } from 'zustand';
 import type { EntityNode, ActionEdge, LocationNode } from './Model';
 import { MarkerType } from '@xyflow/react';
+import { jsonrepair } from 'jsonrepair';
 import { browserStorage } from '../translation/services/BrowserStorage';
-import type { TranslationProject, ExtendedGlossary } from '../translation/types';
+import type { ExtendedGlossary } from '../translation/types';
 
 let geminiAPI: GoogleGenerativeAI | null = null;
 
@@ -28,20 +29,34 @@ export interface CharacterRelationshipInArc {
 export interface GlossaryCharacter {
   id: string;
   name: string;
+  // Alternate surface forms used in text (nicknames, titles, different transliterations, etc.)
+  // Filled primarily during consolidation (LLM entity resolution).
+  aliases?: string[];
   korean_name?: string;
+  korean_surname?: string;
+  korean_given_name?: string;
+  surname?: string;
+  given_name?: string;
+  english_name?: string;
   description: string;
   physical_appearance?: string;
   personality?: string;
   traits?: string[];
   emoji: string;
   age?: string;
+  age_group?: string;
   gender?: string;
   role?: 'protagonist' | 'antagonist' | 'major' | 'supporting' | 'minor';
+  // Arc-specific metadata (should NOT be globally synced)
+  role_in_arc?: string;
+  first_appearance?: boolean;
+  first_appearance_arc?: string;
   occupation?: string;
   abilities?: string[];
   speech_style?: string;
   translation_notes?: string; // Nuances, charm points, gap moe, etc.
   name_variants?: { [key: string]: string }; // e.g., {"nickname": "별명", "title": "직함"}
+  honorifics_used?: Record<string, string>;
   relationships?: Array<CharacterRelationshipInArc>;
 }
 
@@ -61,6 +76,8 @@ export interface GlossaryLocation {
   description: string;
   emoji: string;
   type?: string; // e.g., "city", "building", "room", "natural"
+  atmosphere?: string;
+  significance?: string;
 }
 
 export interface GlossaryTerm {
@@ -69,6 +86,14 @@ export interface GlossaryTerm {
   translation: string; // English translation
   context: string;
   category?: 'name' | 'place' | 'item' | 'concept' | 'cultural' | 'other';
+  notes?: string;
+  // Optional richer decision data (used by consolidation to create translator-facing guidance)
+  aliases?: string[];
+  preferred_translation?: string;
+  alternatives?: string[];
+  why_hard?: string;
+  do_not_translate_as?: string[];
+  decision_notes?: string;
 }
 
 export interface StorySummary {
@@ -116,13 +141,7 @@ export interface GlossaryArc {
   }>; // Relationships specific to this arc
   key_events: string[]; // Key event summaries
   background_changes?: string[]; // Changes in setting/background in this arc
-  terms: Array<{
-    id: string;
-    original: string;
-    translation: string;
-    context: string;
-    category?: string;
-  }>; // Terms specific to this arc
+  terms: GlossaryTerm[]; // Terms specific to this arc
   start_chunk?: number; // Starting chunk index
   end_chunk?: number; // Ending chunk index
 }
@@ -138,6 +157,8 @@ export interface GlossaryState {
   processedChunks: number;
   totalChunks: number;
   isLoading: boolean;
+  // Raw per-chunk LLM extractions (source-of-truth for consolidation).
+  raw_chunks: RawChunkExtraction[];
 }
 
 interface GlossaryAction {
@@ -216,7 +237,127 @@ const initialState: GlossaryState = {
   processedChunks: 0,
   totalChunks: 0,
   isLoading: false,
+  raw_chunks: [],
 };
+
+export interface RawChunkExtraction {
+  chunkIndex: number;
+  extractedAt: string; // ISO timestamp
+  model: string;
+  // Parsed JSON returned by LLM (kept verbatim as much as possible)
+  raw: any;
+  // For debugging / re-parsing if needed
+  rawText?: string;
+  parseError?: string;
+}
+
+function upsertRawChunk(
+  chunks: RawChunkExtraction[],
+  item: RawChunkExtraction
+): RawChunkExtraction[] {
+  const idx = chunks.findIndex(c => c.chunkIndex === item.chunkIndex);
+  if (idx === -1) return [...chunks, item].sort((a, b) => a.chunkIndex - b.chunkIndex);
+  const next = [...chunks];
+  next[idx] = item;
+  return next.sort((a, b) => a.chunkIndex - b.chunkIndex);
+}
+
+function extractFirstJsonObject(text: string): string | null {
+  if (!text) return null;
+  // Greedy match from first "{" to last "}".
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  return jsonMatch ? jsonMatch[0] : null;
+}
+
+function parseLenientJson(text: string): any {
+  const candidate = extractFirstJsonObject(text) ?? text;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    // Attempt repair; this handles trailing commas, unescaped newlines, etc.
+    try {
+      return JSON.parse(jsonrepair(candidate));
+    } catch {
+      // Last resort: repair the whole text (sometimes the regex cut is wrong)
+      return JSON.parse(jsonrepair(text));
+    }
+  }
+}
+
+function asStringRecordOrEmpty(value: any): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string') {
+      out[k] = v;
+      continue;
+    }
+    if (v && typeof v === 'object') {
+      // Compact object into a translator-friendly single line.
+      // Prefer common fields if present.
+      const obj = v as any;
+      const parts: string[] = [];
+      if (obj.meaning) parts.push(`meaning: ${obj.meaning}`);
+      if (obj.translation_strategy) parts.push(`strategy: ${obj.translation_strategy}`);
+      if (obj.translation) parts.push(`translation: ${obj.translation}`);
+      if (obj.nuance) parts.push(`nuance: ${obj.nuance}`);
+      if (obj.usage_notes) parts.push(`notes: ${obj.usage_notes}`);
+      if (Array.isArray(obj.examples) && obj.examples.length > 0) {
+        parts.push(`examples: ${obj.examples.slice(0, 3).join(' / ')}`);
+      }
+      out[k] = parts.length > 0 ? parts.join(' | ') : JSON.stringify(obj);
+      continue;
+    }
+    out[k] = String(v);
+  }
+  return out;
+}
+
+function fallbackAggregateGlobalsFromRaw(rawChunks: RawChunkExtraction[]): {
+  honorifics: Record<string, string>;
+  recurring_phrases: Record<string, string>;
+  style_guide: Partial<StyleGuide>;
+} {
+  const honorificBuckets = new Map<string, Set<string>>();
+  const phraseBuckets = new Map<string, Set<string>>();
+  const styleGuideParts: Partial<StyleGuide>[] = [];
+
+  for (const c of rawChunks) {
+    const raw = c?.raw;
+    if (!raw || typeof raw !== 'object') continue;
+
+    const honorifics = asStringRecordOrEmpty((raw as any).honorifics);
+    for (const [k, v] of Object.entries(honorifics)) {
+      if (!honorificBuckets.has(k)) honorificBuckets.set(k, new Set());
+      if (v && v.trim()) honorificBuckets.get(k)!.add(v.trim());
+    }
+
+    const phrases = asStringRecordOrEmpty((raw as any).recurring_phrases);
+    for (const [k, v] of Object.entries(phrases)) {
+      if (!phraseBuckets.has(k)) phraseBuckets.set(k, new Set());
+      if (v && v.trim()) phraseBuckets.get(k)!.add(v.trim());
+    }
+
+    const sg = (raw as any).style_guide;
+    if (sg && typeof sg === 'object') styleGuideParts.push(sg);
+  }
+
+  const honorifics: Record<string, string> = {};
+  for (const [k, set] of honorificBuckets.entries()) {
+    const arr = Array.from(set);
+    honorifics[k] = arr.length === 1 ? arr[0] : arr.join(' || ');
+  }
+
+  const recurring_phrases: Record<string, string> = {};
+  for (const [k, set] of phraseBuckets.entries()) {
+    const arr = Array.from(set);
+    recurring_phrases[k] = arr.length === 1 ? arr[0] : arr.join(' || ');
+  }
+
+  // Shallow merge style guide parts; prefer later (later chunks often have more context).
+  const style_guide = styleGuideParts.reduce((acc, sg) => ({ ...acc, ...sg }), {} as Partial<StyleGuide>);
+  return { honorifics, recurring_phrases, style_guide };
+}
 
 function getLanguageDirective(targetLanguage: 'en' | 'ja'): string {
   if (targetLanguage === 'ja') {
@@ -285,11 +426,246 @@ function getLanguageDirective(targetLanguage: 'en' | 'ja'): string {
   `;
 }
 
+function normalizeKey(value: string): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function scoreCharacter(c: Partial<GlossaryCharacter> | undefined): number {
+  if (!c) return 0;
+  const strScore = (s?: string) => (s ? Math.min(200, s.trim().length) : 0);
+  const arrScore = (a?: any[]) => (Array.isArray(a) ? Math.min(80, a.length * 10) : 0);
+  const objScore = (o?: any) => (o && typeof o === 'object' ? Math.min(50, Object.keys(o).length * 5) : 0);
+  return (
+    strScore(c.korean_name) +
+    strScore(c.name) +
+    strScore(c.description) +
+    strScore(c.physical_appearance) +
+    strScore(c.personality) +
+    strScore(c.speech_style) +
+    strScore(c.translation_notes) +
+    arrScore(c.traits) +
+    arrScore(c.abilities) +
+    arrScore((c as any).aliases) +
+    objScore(c.name_variants)
+  );
+}
+
+function mergeStringsPreferLonger(a?: string, b?: string): string | undefined {
+  const aa = (a || '').trim();
+  const bb = (b || '').trim();
+  if (!aa) return bb || undefined;
+  if (!bb) return aa || undefined;
+  return bb.length > aa.length ? bb : aa;
+}
+
+function mergeStringArrays(a?: string[], b?: string[]): string[] | undefined {
+  const out = new Set<string>();
+  for (const x of (a || [])) if (x && String(x).trim()) out.add(String(x).trim());
+  for (const x of (b || [])) if (x && String(x).trim()) out.add(String(x).trim());
+  const arr = Array.from(out);
+  return arr.length > 0 ? arr : undefined;
+}
+
+function mergeCharactersRich(a: GlossaryCharacter, b: Partial<GlossaryCharacter>): GlossaryCharacter {
+  // Keep ID from consolidated a; enrich other fields.
+  const merged: GlossaryCharacter = {
+    ...a,
+    korean_name: mergeStringsPreferLonger(a.korean_name, b.korean_name),
+    description: mergeStringsPreferLonger(a.description, b.description) || a.description,
+    physical_appearance: mergeStringsPreferLonger(a.physical_appearance, b.physical_appearance),
+    personality: mergeStringsPreferLonger(a.personality, b.personality),
+    speech_style: mergeStringsPreferLonger(a.speech_style, b.speech_style),
+    translation_notes: mergeStringsPreferLonger(a.translation_notes, b.translation_notes),
+    occupation: mergeStringsPreferLonger(a.occupation, b.occupation),
+    age: mergeStringsPreferLonger(a.age, b.age),
+    gender: mergeStringsPreferLonger(a.gender, b.gender),
+    role: (a.role || b.role) as any,
+    traits: mergeStringArrays(a.traits, b.traits),
+    abilities: mergeStringArrays(a.abilities, b.abilities),
+    aliases: mergeStringArrays(a.aliases, (b as any).aliases),
+    name_variants: { ...(a.name_variants || {}), ...(b.name_variants || {}) },
+  };
+  return merged;
+}
+
+function buildRawCharacterIndex(rawChunks: RawChunkExtraction[]): {
+  byKey: Map<string, GlossaryCharacter>;
+  surfaceToKey: Map<string, string>;
+} {
+  const byKey = new Map<string, GlossaryCharacter>();
+  const surfaceToKey = new Map<string, string>();
+
+  for (const c of rawChunks) {
+    const raw = c?.raw;
+    const arcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
+    for (const arc of arcs) {
+      const chars = Array.isArray(arc?.characters) ? arc.characters : [];
+      for (const ch of chars) {
+        if (!ch) continue;
+        const name = String(ch.name || '').trim();
+        const korean = String(ch.korean_name || '').trim();
+        const key = normalizeKey(korean || name);
+        if (!key) continue;
+
+        const candidate: GlossaryCharacter = {
+          id: String(ch.id || `char-${key}`),
+          name: name || (korean || 'Unknown'),
+          korean_name: korean || '',
+          description: String(ch.description || ''),
+          physical_appearance: String(ch.physical_appearance || ''),
+          personality: String(ch.personality || ''),
+          traits: Array.isArray(ch.traits) ? ch.traits : [],
+          emoji: String(ch.emoji || '👤'),
+          age: String(ch.age || ''),
+          gender: String(ch.gender || ''),
+          role: ch.role,
+          occupation: String(ch.occupation || ''),
+          abilities: Array.isArray(ch.abilities) ? ch.abilities : [],
+          speech_style: String(ch.speech_style || ''),
+          translation_notes: String(ch.translation_notes || ''),
+          name_variants: ch.name_variants || {},
+          aliases: Array.isArray(ch.aliases) ? ch.aliases : undefined,
+        };
+
+        const existing = byKey.get(key);
+        const pick = !existing || scoreCharacter(candidate) > scoreCharacter(existing) ? candidate : existing;
+        byKey.set(key, pick);
+
+        // Build surface mapping
+        const surfaces: string[] = [];
+        if (candidate.name) surfaces.push(candidate.name);
+        if (candidate.korean_name) surfaces.push(candidate.korean_name);
+        for (const a of (candidate.aliases || [])) surfaces.push(a);
+        for (const s of surfaces) {
+          const sk = normalizeKey(s);
+          if (sk) surfaceToKey.set(sk, key);
+        }
+      }
+    }
+  }
+
+  return { byKey, surfaceToKey };
+}
+
+function enrichArcsFromRaw(
+  arcs: GlossaryArc[],
+  rawChunks: RawChunkExtraction[]
+): GlossaryArc[] {
+  const { byKey, surfaceToKey } = buildRawCharacterIndex(rawChunks);
+
+  return arcs.map((arc) => {
+    const surfaceToCanonical = new Map<string, string>();
+    for (const ch of (arc.characters || [])) {
+      const canonical = ch.name;
+      const surfaces = [
+        ch.name,
+        ch.korean_name,
+        ...(ch.aliases || []),
+        ...Object.values(ch.name_variants || {}),
+      ].filter(Boolean) as string[];
+      for (const s of surfaces) {
+        const sk = normalizeKey(s);
+        if (sk) surfaceToCanonical.set(sk, canonical);
+      }
+    }
+
+    const enrichedCharacters = (arc.characters || []).map((ch) => {
+      const key =
+        (ch.korean_name && byKey.has(normalizeKey(ch.korean_name))) ? normalizeKey(ch.korean_name) :
+        (byKey.has(normalizeKey(ch.name)) ? normalizeKey(ch.name) :
+          surfaceToKey.get(normalizeKey(ch.name)) ||
+          (ch.korean_name ? surfaceToKey.get(normalizeKey(ch.korean_name)) : undefined));
+
+      const rawBest = key ? byKey.get(key) : undefined;
+      return rawBest ? mergeCharactersRich(ch, rawBest) : ch;
+    });
+
+    // Relationship enrichment: if missing or too sparse, pull from raw relationships that map to arc characters.
+    let relationships = Array.isArray(arc.relationships) ? [...arc.relationships] : [];
+    const relKey = (a: string, b: string, t: string) => `${normalizeKey(a)}|${normalizeKey(b)}|${normalizeKey(t)}`;
+    const existingRelKeys = new Set<string>(relationships.map(r => relKey(r.character_a, r.character_b, r.relationship_type)));
+
+    if (relationships.length < 2) {
+      for (const c of rawChunks) {
+        const raw = c?.raw;
+        const rawArcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
+        for (const ra of rawArcs) {
+          const rels = Array.isArray(ra?.relationships) ? ra.relationships : [];
+          for (const r of rels) {
+            const a = normalizeKey(String(r.character_a || ''));
+            const b = normalizeKey(String(r.character_b || ''));
+            if (!a || !b) continue;
+            const ca = surfaceToCanonical.get(a);
+            const cb = surfaceToCanonical.get(b);
+            if (!ca || !cb) continue;
+            const next = {
+              character_a: ca,
+              character_b: cb,
+              relationship_type: String(r.relationship_type || 'unknown'),
+              description: String(r.description || ''),
+              sentiment: r.sentiment || 'neutral',
+              addressing: String(r.addressing || ''),
+            };
+            const k = relKey(next.character_a, next.character_b, next.relationship_type);
+            if (existingRelKeys.has(k)) continue;
+            existingRelKeys.add(k);
+            relationships.push(next);
+          }
+        }
+      }
+    }
+
+    // Term enrichment: ensure we don't end up with an empty/too-thin term list.
+    let terms = Array.isArray(arc.terms) ? [...arc.terms] : [];
+    const termByOriginal = new Set<string>(terms.map(t => normalizeKey(t.original)));
+    if (terms.length < 10) {
+      for (const c of rawChunks) {
+        const raw = c?.raw;
+        const rawArcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
+        for (const ra of rawArcs) {
+          const tlist = Array.isArray(ra?.terms) ? ra.terms : [];
+          for (const t of tlist) {
+            const orig = String(t.original || '').trim();
+            if (!orig) continue;
+            const ok =
+              typeof t.notes === 'string' && t.notes.trim().length > 0 ||
+              typeof t.context === 'string' && t.context.trim().length > 40 ||
+              (typeof t.category === 'string' && ['slang', 'cultural', 'concept', 'other'].includes(t.category.toLowerCase()));
+            if (!ok) continue;
+            const k = normalizeKey(orig);
+            if (termByOriginal.has(k)) continue;
+            termByOriginal.add(k);
+            terms.push({
+              id: String(t.id || `term-${k}`),
+              original: orig,
+              translation: String(t.translation || ''),
+              context: String(t.context || ''),
+              category: (t.category as any) || 'other',
+              notes: String(t.notes || ''),
+              aliases: Array.isArray(t.aliases) ? t.aliases : undefined,
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      ...arc,
+      characters: enrichedCharacters,
+      relationships,
+      terms,
+    };
+  });
+}
+
 async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
   arcs: GlossaryArc[];
-  honorifics?: { [key: string]: string };
-  recurring_phrases?: { [key: string]: string };
+  // NOTE: These are treated as *provisional* during per-chunk extraction.
+  // Final versions must be produced during consolidation from raw_chunks.
+  honorifics?: Record<string, any>;
+  recurring_phrases?: Record<string, any>;
   style_guide?: Partial<StyleGuide>;
+  rawChunk?: RawChunkExtraction;
 }> {
   const targetLanguage = useGlossaryStore.getState().target_language;
   const languageDirective = getLanguageDirective(targetLanguage);
@@ -298,6 +674,11 @@ async function extractFromChunk(chunk: string, chunkIndex: number): Promise<{
 ${languageDirective}
 
 **🎯 EXTRACTION PRIORITY: NUANCE & COMPACTNESS**
+
+0. **RAW MENTIONS (IMPORTANT FOR ENTITY RESOLUTION)**
+   - For each character/location/term, include:
+     - aliases: [all surface forms used in THIS chunk: nicknames, titles, variants, transliterations]
+   - Do NOT try to unify across chunks here; just capture mentions faithfully.
 
 1. **CHARACTERS - Extract EVERY character**
    ✅ ALWAYS extract these fields:
@@ -352,6 +733,7 @@ ${languageDirective}
       "id": "char-name-${chunkIndex}",
       "name": "English Name",
       "korean_name": "한글이름",
+      "aliases": ["별명", "직함", "다른표기"],
       "age": "age",
       "speech_style": "Style description",
       "physical_appearance": "Features",
@@ -382,6 +764,7 @@ ${languageDirective}
       "id": "loc-${chunkIndex}-0",
       "name": "Place Name",
       "korean_name": "한글지명",
+      "aliases": ["다른지명표기"],
       "description": "Desc",
       "type": "type",
       "emoji": "🏰"
@@ -391,11 +774,26 @@ ${languageDirective}
       "original": "한글",
       "translation": "English",
       "context": "Context",
+      "aliases": ["다른표현", "약칭"],
       "category": "cat"
     }]
   }],
-  "honorifics": {"님": "suffix"},
-  "recurring_phrases": {"구절": "trans"},
+  "honorifics": {
+    "님": {
+      "meaning": "formal honorific suffix",
+      "translation_strategy": "keep as -nim on first mention then optionally omit depending on context",
+      "usage_notes": "attached to names/titles; conveys respect and distance",
+      "examples": ["OO님"]
+    }
+  },
+  "recurring_phrases": {
+    "그때 그 순간": {
+      "translation": "at that very moment",
+      "nuance": "heightens immediacy/drama; recurring narration hook",
+      "usage_notes": "often used at climactic beats; keep consistent",
+      "examples": ["그때 그 순간, ..."]
+    }
+  },
   "style_guide": {
     "translation_guidelines": "Global notes",
     "genre": "genre",
@@ -496,9 +894,16 @@ ${chunk}`;
       terms: (arc.terms || []).map((term: any, termIdx: number) => ({
         id: term.id || `term-${chunkIndex}-${termIdx}`,
         original: term.original || '',
-        translation: term.translation || '',
+        translation: term.translation || term.preferred_translation || '',
         context: term.context || '',
         category: term.category || 'other',
+        notes: term.notes || '',
+        aliases: Array.isArray(term.aliases) ? term.aliases : undefined,
+        preferred_translation: term.preferred_translation || undefined,
+        alternatives: Array.isArray(term.alternatives) ? term.alternatives : undefined,
+        why_hard: term.why_hard || undefined,
+        do_not_translate_as: Array.isArray(term.do_not_translate_as) ? term.do_not_translate_as : undefined,
+        decision_notes: term.decision_notes || undefined,
       })),
       start_chunk: arc.start_chunk !== undefined ? arc.start_chunk : chunkIndex,
       end_chunk: arc.end_chunk,
@@ -534,14 +939,30 @@ ${chunk}`;
       console.log(`   Arc ${i}: ${arc.name} - ${arc.characters.length} chars, ${arc.events.length} events, ${arc.locations.length} locations, ${arc.terms.length} terms`);
     });
 
-    return { arcs, honorifics, recurring_phrases, style_guide };
+    const rawChunk: RawChunkExtraction = {
+      chunkIndex,
+      extractedAt: new Date().toISOString(),
+      model: 'gemini-3-pro-preview',
+      raw: parsed,
+      rawText: jsonString,
+    };
+
+    return { arcs, honorifics, recurring_phrases, style_guide, rawChunk };
   } catch (error) {
     console.error(`❌ Error extracting from chunk ${chunkIndex}:`, error);
     if (error instanceof Error) {
       console.error('Error message:', error.message);
       console.error('Stack trace:', error.stack);
     }
-    return { arcs: [] };
+    const rawChunk: RawChunkExtraction = {
+      chunkIndex,
+      extractedAt: new Date().toISOString(),
+      model: 'gemini-3-pro-preview',
+      raw: null,
+      rawText: undefined,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+    return { arcs: [], rawChunk };
   }
 }
 
@@ -553,6 +974,7 @@ ${chunk}`;
 // - consolidateTerms (previously lines 786-844)
 // All data is now managed within arcs.
 
+// Legacy arc-only consolidation (LLM-based). Used only as a last-resort fallback when raw consolidation fails.
 async function consolidateArcs(arcs: GlossaryArc[]): Promise<GlossaryArc[]> {
   if (arcs.length === 0) return [];
   if (arcs.length <= 3) return arcs; // Too few to consolidate
@@ -1106,6 +1528,795 @@ ${JSON.stringify(arcs.map(a => ({
   }
 }
 
+async function consolidateFromRawChunks(input: RawChunkExtraction[]): Promise<{
+  arcs: GlossaryArc[];
+  honorifics?: Record<string, string>;
+  recurring_phrases?: Record<string, string>;
+  style_guide?: Partial<StyleGuide>;
+}> {
+  if (!geminiAPI) throw new Error('Gemini API not initialized');
+
+  const targetLanguage = useGlossaryStore.getState().target_language;
+  const languageDirective = getLanguageDirective(targetLanguage);
+
+  // Keep prompt size bounded: only pass parsed JSON (no full novel text).
+  const compact = input
+    .filter(c => c && c.chunkIndex !== undefined)
+    .map(c => ({
+      chunkIndex: c.chunkIndex,
+      extractedAt: c.extractedAt,
+      parseError: c.parseError,
+      raw: c.raw,
+    }));
+
+  const prompt = `You are a Korean web novel translation expert.
+${languageDirective}
+
+You will be given RAW per-chunk extractions from earlier LLM calls.
+Your job is to IMPROVE the glossary by doing a consolidation pass that:
+
+1) ENTITY RESOLUTION (CRITICAL)
+   - Identify when multiple surface forms refer to the SAME character/location/term across chunks.
+   - Merge them into a single canonical entity.
+   - Preserve ALL aliases/surface forms you used to unify them.
+   - Do NOT rely on naive string matching only; use evidence, relationships, roles, speech style, context.
+
+2) ARC CONSOLIDATION (DO NOT OVER-COLLAPSE)
+   - Create a chronologically ordered arc list that is useful for translators.
+   - If the input clearly contains multiple distinct arcs (different settings, goals, cast focus), keep them separate.
+   - HARD RULE: If there are 4+ chunk extractions, do NOT output fewer than 4 arcs.
+   - Prefer 6-12 arcs for long works. Only merge arcs when they are truly the same segment.
+   - Each arc must contain complete character objects (not just names).
+
+3) ARC-SPECIFIC EXTRACTION / ENRICHMENT
+   - For each arc, (re)extract and refine: personality, status/identity (신분/직함/역할), abilities, and relationships.
+   - Relationships must include addressing when available (호칭/부르는 말).
+
+3.5) CHARACTER RICHNESS (TRANSLATION GUIDE QUALITY)
+   - Characters are the most important part of this glossary. Do NOT compress them into one-liners.
+   - Merge duplicates across chunks (same person with different names) but KEEP their richness:
+     - keep the best/longest descriptions, speech_style, translation_notes
+     - union traits, abilities, aliases, name_variants
+   - Make sure major characters have substantial translation_notes describing how to translate their voice.
+
+3.6) TRANSLATION-CRITICAL TERMS (NOT LOW-LEVEL)
+   - The goal is a translator guide. Prefer terms that are genuinely hard or decision-heavy:
+     - idioms, slang/insults, speech-pattern markers, illeism/quirks, honorific/title localization decisions,
+       culturally loaded phrases, magic/system terminology with inconsistent renderings, ambiguous polysemy.
+   - Avoid trivial obvious nouns/titles unless they have special nuance in THIS work.
+   - For each term, provide a clear decision: canonical translation + allowed variants + what NOT to translate as + why.
+   - Minimum: 12 terms if there is enough data; Maximum: 60 terms total per entire output.
+
+4) STRICT OUTPUT REQUIREMENTS
+   - Return ONLY valid JSON. No markdown, no code fences.
+   - Keep this output schema (you may add fields but must not remove these):
+{
+  "arcs": [{
+    "id": "arc-1",
+    "name": "Arc Name",
+    "description": "Description",
+    "theme": "Theme",
+    "start_chunk": 0,
+    "end_chunk": 5,
+    "characters": [{
+      "id": "char-canonical-id",
+      "name": "Canonical English Name",
+      "korean_name": "한글이름",
+      "aliases": ["별칭/직함/다른표기"],
+      "description": "Short description",
+      "physical_appearance": "Distinctive features",
+      "personality": "Core personality (arc-aware)",
+      "traits": ["trait1", "trait2"],
+      "emoji": "👤",
+      "age": "age",
+      "gender": "gender",
+      "role": "protagonist|antagonist|major|supporting|minor",
+      "occupation": "occupation",
+      "abilities": ["ability1"],
+      "speech_style": "speech style",
+      "translation_notes": "nuances to preserve",
+      "name_variants": {"title": "직함"},
+      "role_in_arc": "role in this arc",
+      "first_appearance": true
+    }],
+    "relationships": [{
+      "character_a": "Canonical English Name A",
+      "character_b": "Canonical English Name B",
+      "relationship_type": "type",
+      "description": "desc",
+      "sentiment": "positive|negative|neutral",
+      "addressing": "호칭/부르는말"
+    }],
+    "events": [{
+      "id": "event-...",
+      "name": "Event name",
+      "description": "What happened",
+      "characters_involved": ["Canonical English Name"],
+      "location": "Canonical location name",
+      "importance": "major|minor"
+    }],
+    "locations": [{
+      "id": "location-...",
+      "name": "Canonical location name",
+      "korean_name": "한글지명",
+      "aliases": ["다른표기"],
+      "description": "desc",
+      "emoji": "📍",
+      "type": "type"
+    }],
+    "key_events": ["..."],
+    "terms": [{
+      "id": "term-...",
+      "original": "한글",
+      "translation": "English/Japanese",
+      "context": "context",
+      "category": "name|place|item|concept|cultural|other",
+      "notes": "notes",
+      "aliases": ["다른표현"],
+      "preferred_translation": "same as translation (canonical)",
+      "alternatives": ["allowed variant 1", "allowed variant 2"],
+      "why_hard": "why this is hard / what nuance is at stake",
+      "do_not_translate_as": ["bad option 1", "bad option 2"],
+      "decision_notes": "short, actionable guidance for the translator"
+    }]
+  }],
+  "honorifics": {},
+  "recurring_phrases": {},
+  "style_guide": {}
+}
+
+HONORIFICS (CRITICAL):
+- Build honorifics by considering ALL chunk raw extractions (do NOT just union keys).
+- Deduplicate near-duplicates and merge explanations into ONE best translator-facing entry per key.
+- Value should be a single string that includes: meaning + usage + recommended translation strategy.
+- If the same key has conflicting notes across chunks, resolve by context and include the most defensible guidance.
+
+RECURRING PHRASES (CRITICAL):
+- Build recurring_phrases by considering ALL chunk raw extractions.
+- Deduplicate and choose a canonical translation (or a primary + allowed variants).
+- Value should be a single string that includes: canonical translation + nuance + consistency guidance.
+
+IMPORTANT:
+- Remove empty fields.
+- Ensure relationships' character names match the arc character names exactly.
+- DO NOT discard arc.relationships — they are required for translation guidance.
+
+RAW CHUNK EXTRACTIONS:
+${JSON.stringify(compact, null, 2)}
+`;
+
+  console.log('🔄 Consolidating glossary from raw chunks with LLM...');
+  const model = geminiAPI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
+  const result = await model.generateContent(prompt);
+  const content = (await result.response).text();
+
+  let parsed: any;
+  try {
+    parsed = parseLenientJson(content);
+  } catch (e) {
+    console.error('❌ Failed to parse raw consolidation response');
+    console.error('Full response:', content);
+    throw e;
+  }
+  const normalizedArcs: GlossaryArc[] = (parsed.arcs || []).map((arc: any, arcIdx: number) => ({
+    id: arc.id || arc.name || `arc-${arcIdx}`,
+    name: arc.name || `Arc ${arcIdx + 1}`,
+    description: arc.description || '',
+    theme: arc.theme || '',
+    characters: Array.isArray(arc.characters) ? arc.characters : [],
+    events: Array.isArray(arc.events) ? arc.events : [],
+    locations: Array.isArray(arc.locations) ? arc.locations : [],
+    relationships: Array.isArray(arc.relationships) ? arc.relationships : [],
+    key_events: Array.isArray(arc.key_events) ? arc.key_events : [],
+    background_changes: Array.isArray(arc.background_changes) ? arc.background_changes : [],
+    terms: (Array.isArray(arc.terms) ? arc.terms : []).map((t: any, termIdx: number) => ({
+      id: t.id || `term-${arcIdx}-${termIdx}`,
+      original: t.original || '',
+      translation: t.translation || t.preferred_translation || '',
+      context: t.context || '',
+      category: (t.category as GlossaryTerm['category']) || 'other',
+      notes: t.notes || '',
+      aliases: Array.isArray(t.aliases) ? t.aliases : undefined,
+      preferred_translation: t.preferred_translation || undefined,
+      alternatives: Array.isArray(t.alternatives) ? t.alternatives : undefined,
+      why_hard: t.why_hard || undefined,
+      do_not_translate_as: Array.isArray(t.do_not_translate_as) ? t.do_not_translate_as : undefined,
+      decision_notes: t.decision_notes || undefined,
+    })),
+    start_chunk: arc.start_chunk,
+    end_chunk: arc.end_chunk,
+  }));
+  const enriched = enrichArcsFromRaw(normalizedArcs, input);
+
+  // Safety: if the LLM collapses arcs too aggressively, fall back to richer per-chunk arcs.
+  const rawSeedCount = input.reduce((acc, c) => {
+    const arcs = Array.isArray(c?.raw?.arcs) ? c.raw.arcs : [];
+    for (const a of arcs) {
+      const nm = normalizeKey(String(a?.name || a?.id || ''));
+      if (nm) acc.add(nm);
+    }
+    return acc;
+  }, new Set<string>()).size;
+
+  const finalArcs = (rawSeedCount >= 4 && enriched.length <= 2) ? enrichArcsFromRaw(
+    input.flatMap(c => (Array.isArray(c?.raw?.arcs) ? c.raw.arcs : []))
+      .map((a: any, i: number) => ({
+        id: a.id || a.name || `arc-raw-${i}`,
+        name: a.name || `Arc ${i + 1}`,
+        description: a.description || '',
+        theme: a.theme || '',
+        characters: Array.isArray(a.characters) ? a.characters : [],
+        events: Array.isArray(a.events) ? a.events : [],
+        locations: Array.isArray(a.locations) ? a.locations : [],
+        relationships: Array.isArray(a.relationships) ? a.relationships : [],
+        key_events: Array.isArray(a.key_events) ? a.key_events : [],
+        background_changes: Array.isArray(a.background_changes) ? a.background_changes : [],
+        terms: Array.isArray(a.terms) ? a.terms : [],
+        start_chunk: a.start_chunk,
+        end_chunk: a.end_chunk,
+      })) as any,
+    input
+  ) : enriched;
+
+  return {
+    arcs: finalArcs,
+    honorifics: asStringRecordOrEmpty(parsed.honorifics),
+    recurring_phrases: asStringRecordOrEmpty(parsed.recurring_phrases),
+    style_guide: parsed.style_guide || {},
+  };
+}
+
+type ConsolidatedGlossary = {
+  arcs: GlossaryArc[];
+  honorifics?: Record<string, string>;
+  recurring_phrases?: Record<string, string>;
+  style_guide?: Partial<StyleGuide>;
+};
+
+function summarizeRawForLLM(c: RawChunkExtraction) {
+  // Keep only what matters for consolidation; avoid prompt bloat.
+  const raw = c?.raw || {};
+  const arcs = Array.isArray((raw as any).arcs) ? (raw as any).arcs : [];
+  const slimArcs = arcs.map((a: any) => ({
+    id: a.id,
+    name: a.name,
+    description: a.description,
+    theme: a.theme,
+    start_chunk: a.start_chunk,
+    end_chunk: a.end_chunk,
+    characters: Array.isArray(a.characters)
+      ? a.characters.map((ch: any) => ({
+          id: ch.id,
+          name: ch.name,
+          korean_name: ch.korean_name,
+          aliases: ch.aliases,
+          role: ch.role,
+          occupation: ch.occupation,
+          abilities: ch.abilities,
+          speech_style: ch.speech_style,
+          translation_notes: ch.translation_notes,
+          traits: ch.traits,
+          physical_appearance: ch.physical_appearance,
+          personality: ch.personality,
+          name_variants: ch.name_variants,
+        }))
+      : [],
+    relationships: Array.isArray(a.relationships) ? a.relationships : [],
+    events: Array.isArray(a.events) ? a.events : [],
+    locations: Array.isArray(a.locations) ? a.locations : [],
+    terms: Array.isArray(a.terms)
+      ? a.terms.map((t: any) => ({
+          id: t.id,
+          original: t.original,
+          translation: t.translation,
+          preferred_translation: t.preferred_translation,
+          alternatives: t.alternatives,
+          category: t.category,
+          context: t.context,
+          notes: t.notes,
+          aliases: t.aliases,
+          why_hard: t.why_hard,
+          do_not_translate_as: t.do_not_translate_as,
+          decision_notes: t.decision_notes,
+        }))
+      : [],
+    key_events: Array.isArray(a.key_events) ? a.key_events : [],
+  }));
+
+  return {
+    chunkIndex: c.chunkIndex,
+    extractedAt: c.extractedAt,
+    parseError: c.parseError,
+    raw: {
+      arcs: slimArcs,
+      honorifics: (raw as any).honorifics,
+      recurring_phrases: (raw as any).recurring_phrases,
+      style_guide: (raw as any).style_guide,
+    },
+  };
+}
+
+function batchByJsonSize<T>(items: T[], maxChars: number): T[][] {
+  const batches: T[][] = [];
+  let cur: T[] = [];
+  let curSize = 0;
+
+  for (const it of items) {
+    const s = JSON.stringify(it);
+    const size = s.length;
+    if (cur.length > 0 && curSize + size > maxChars) {
+      batches.push(cur);
+      cur = [];
+      curSize = 0;
+    }
+    cur.push(it);
+    curSize += size;
+  }
+  if (cur.length > 0) batches.push(cur);
+  return batches;
+}
+
+async function llmConsolidateJson(prompt: string): Promise<any> {
+  if (!geminiAPI) throw new Error('Gemini API not initialized');
+  const model = geminiAPI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
+  const result = await model.generateContent(prompt);
+  const content = (await result.response).text();
+  return parseLenientJson(content);
+}
+
+function normalizeConsolidated(parsed: any): ConsolidatedGlossary {
+  const arcs: GlossaryArc[] = (parsed?.arcs || []).map((arc: any, arcIdx: number) => ({
+    id: arc.id || arc.name || `arc-${arcIdx}`,
+    name: arc.name || `Arc ${arcIdx + 1}`,
+    description: arc.description || '',
+    theme: arc.theme || '',
+    characters: Array.isArray(arc.characters) ? arc.characters : [],
+    events: Array.isArray(arc.events) ? arc.events : [],
+    locations: Array.isArray(arc.locations) ? arc.locations : [],
+    relationships: Array.isArray(arc.relationships) ? arc.relationships : [],
+    key_events: Array.isArray(arc.key_events) ? arc.key_events : [],
+    background_changes: Array.isArray(arc.background_changes) ? arc.background_changes : [],
+    terms: (Array.isArray(arc.terms) ? arc.terms : []).map((t: any, termIdx: number) => ({
+      id: t.id || `term-${arcIdx}-${termIdx}`,
+      original: t.original || '',
+      translation: t.translation || t.preferred_translation || '',
+      preferred_translation: t.preferred_translation || undefined,
+      alternatives: Array.isArray(t.alternatives) ? t.alternatives : undefined,
+      context: t.context || '',
+      category: (t.category as GlossaryTerm['category']) || 'other',
+      notes: t.notes || '',
+      aliases: Array.isArray(t.aliases) ? t.aliases : undefined,
+      why_hard: t.why_hard || undefined,
+      do_not_translate_as: Array.isArray(t.do_not_translate_as) ? t.do_not_translate_as : undefined,
+      decision_notes: t.decision_notes || undefined,
+    })),
+    start_chunk: arc.start_chunk,
+    end_chunk: arc.end_chunk,
+  }));
+
+  return {
+    arcs,
+    honorifics: asStringRecordOrEmpty(parsed?.honorifics),
+    recurring_phrases: asStringRecordOrEmpty(parsed?.recurring_phrases),
+    style_guide: parsed?.style_guide || {},
+  };
+}
+
+function backfillArcFromRawByChunkRange(
+  arc: GlossaryArc,
+  rawChunks: RawChunkExtraction[]
+): GlossaryArc {
+  const { byKey, surfaceToKey } = buildRawCharacterIndex(rawChunks);
+
+  const start = Number.isFinite(arc.start_chunk as any) ? (arc.start_chunk as number) : 0;
+  const end = Number.isFinite(arc.end_chunk as any)
+    ? (arc.end_chunk as number)
+    : (rawChunks.length > 0 ? Math.max(...rawChunks.map(c => c.chunkIndex)) : start);
+
+  const inRange = (idx: number) => idx >= start && idx <= end;
+
+  // Collect candidate entities (keys) observed in raw chunks within range
+  const charKeys = new Set<string>();
+  const locNames = new Map<string, any>();
+  const termByOrig = new Map<string, any>();
+  const relCandidates: any[] = [];
+  const eventCandidates: any[] = [];
+
+  for (const c of rawChunks) {
+    if (!c || !inRange(c.chunkIndex)) continue;
+    const arcs = Array.isArray(c.raw?.arcs) ? c.raw.arcs : [];
+    for (const ra of arcs) {
+      const chars = Array.isArray(ra?.characters) ? ra.characters : [];
+      for (const ch of chars) {
+        const key = normalizeKey(String(ch?.korean_name || ch?.name || ''));
+        if (key) charKeys.add(key);
+        const aliases = Array.isArray(ch?.aliases) ? ch.aliases : [];
+        for (const a of aliases) {
+          const ak = surfaceToKey.get(normalizeKey(String(a)));
+          if (ak) charKeys.add(ak);
+        }
+      }
+
+      const rels = Array.isArray(ra?.relationships) ? ra.relationships : [];
+      for (const r of rels) relCandidates.push(r);
+
+      const events = Array.isArray(ra?.events) ? ra.events : [];
+      for (const e of events) eventCandidates.push(e);
+
+      const locs = Array.isArray(ra?.locations) ? ra.locations : [];
+      for (const l of locs) {
+        const name = String(l?.name || '').trim();
+        if (!name) continue;
+        const k = normalizeKey(name);
+        if (!locNames.has(k)) locNames.set(k, l);
+      }
+
+      const terms = Array.isArray(ra?.terms) ? ra.terms : [];
+      for (const t of terms) {
+        const orig = String(t?.original || '').trim();
+        if (!orig) continue;
+        const ok =
+          (typeof t.notes === 'string' && t.notes.trim().length > 0) ||
+          (typeof t.context === 'string' && t.context.trim().length > 40) ||
+          (typeof t.why_hard === 'string' && t.why_hard.trim().length > 0) ||
+          (typeof t.decision_notes === 'string' && t.decision_notes.trim().length > 0);
+        if (!ok) continue;
+        const tk = normalizeKey(orig);
+        if (!termByOrig.has(tk)) termByOrig.set(tk, t);
+      }
+    }
+  }
+
+  // If LLM returned no chunk ranges, avoid duplicating everything into every arc by using a smaller heuristic:
+  // fall back to "seed by arc name" only if we can, otherwise keep range-based fill.
+  const needsSeed = !Number.isFinite(arc.start_chunk as any) || !Number.isFinite(arc.end_chunk as any);
+  if (needsSeed && charKeys.size === 0) {
+    // nothing to backfill
+    return arc;
+  }
+
+  // Backfill characters if empty (or suspiciously small)
+  const existingCount = Array.isArray(arc.characters) ? arc.characters.length : 0;
+  let characters = Array.isArray(arc.characters) ? [...arc.characters] : [];
+  const canonNameByKey = new Map<string, string>();
+  for (const k of charKeys) {
+    const best = byKey.get(k);
+    if (!best) continue;
+    canonNameByKey.set(k, best.name);
+  }
+
+  if (existingCount < 3 && charKeys.size > 0) {
+    characters = [];
+    for (const k of charKeys) {
+      const best = byKey.get(k);
+      if (!best) continue;
+      // Deep clone-ish to avoid accidental shared references
+      characters.push({
+        ...best,
+        traits: Array.isArray(best.traits) ? [...best.traits] : best.traits,
+        abilities: Array.isArray(best.abilities) ? [...best.abilities] : best.abilities,
+        aliases: Array.isArray(best.aliases) ? [...best.aliases] : best.aliases,
+        name_variants: best.name_variants ? { ...best.name_variants } : best.name_variants,
+      });
+    }
+  }
+
+  // Backfill relationships if empty
+  let relationships = Array.isArray(arc.relationships) ? [...arc.relationships] : [];
+  if (relationships.length < 2 && characters.length > 0 && relCandidates.length > 0) {
+    const surfaceToCanonical = new Map<string, string>();
+    for (const ch of characters) {
+      const surfaces = [
+        ch.name,
+        ch.korean_name,
+        ...(ch.aliases || []),
+        ...Object.values(ch.name_variants || {}),
+      ].filter(Boolean) as string[];
+      for (const s of surfaces) surfaceToCanonical.set(normalizeKey(s), ch.name);
+    }
+
+    const seen = new Set<string>();
+    for (const r of relCandidates) {
+      const a = surfaceToCanonical.get(normalizeKey(String(r?.character_a || '')));
+      const b = surfaceToCanonical.get(normalizeKey(String(r?.character_b || '')));
+      if (!a || !b) continue;
+      const type = String(r?.relationship_type || 'unknown');
+      const key = `${normalizeKey(a)}|${normalizeKey(b)}|${normalizeKey(type)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      relationships.push({
+        character_a: a,
+        character_b: b,
+        relationship_type: type,
+        description: String(r?.description || ''),
+        sentiment: (r?.sentiment as any) || 'neutral',
+        addressing: String(r?.addressing || ''),
+      });
+    }
+  }
+
+  // Backfill locations/events if empty
+  let locations = Array.isArray(arc.locations) ? [...arc.locations] : [];
+  if (locations.length === 0 && locNames.size > 0) {
+    for (const l of locNames.values()) {
+      const name = String(l?.name || '').trim();
+      if (!name) continue;
+      locations.push({
+        id: String(l?.id || `location-${normalizeKey(name)}`),
+        name,
+        korean_name: String(l?.korean_name || ''),
+        description: String(l?.description || ''),
+        emoji: String(l?.emoji || '📍'),
+        type: String(l?.type || ''),
+        atmosphere: l?.atmosphere,
+        significance: l?.significance,
+        aliases: Array.isArray(l?.aliases) ? l.aliases : undefined,
+      } as any);
+    }
+  }
+
+  let events = Array.isArray(arc.events) ? [...arc.events] : [];
+  if (events.length === 0 && eventCandidates.length > 0) {
+    // Only keep events that mention any arc character surface form (best-effort).
+    const surfaceSet = new Set<string>();
+    for (const ch of characters) {
+      surfaceSet.add(normalizeKey(ch.name));
+      if (ch.korean_name) surfaceSet.add(normalizeKey(ch.korean_name));
+      for (const a of (ch.aliases || [])) surfaceSet.add(normalizeKey(a));
+    }
+    for (const e of eventCandidates) {
+      const involved = Array.isArray(e?.characters_involved) ? e.characters_involved : [];
+      const hit = involved.some((x: any) => surfaceSet.has(normalizeKey(String(x))));
+      if (!hit && involved.length > 0) continue;
+      events.push({
+        id: String(e?.id || `event-${normalizeKey(String(e?.name || ''))}`),
+        name: String(e?.name || ''),
+        description: String(e?.description || ''),
+        characters_involved: involved.map((x: any) => String(x)),
+        location: String(e?.location || ''),
+        importance: (e?.importance as any) || 'minor',
+      });
+    }
+  }
+
+  // Backfill terms if empty/too small
+  let terms = Array.isArray(arc.terms) ? [...arc.terms] : [];
+  if (terms.length < 5 && termByOrig.size > 0) {
+    for (const t of termByOrig.values()) {
+      terms.push({
+        id: String(t?.id || `term-${normalizeKey(String(t?.original || ''))}`),
+        original: String(t?.original || ''),
+        translation: String(t?.translation || t?.preferred_translation || ''),
+        preferred_translation: t?.preferred_translation || undefined,
+        alternatives: Array.isArray(t?.alternatives) ? t.alternatives : undefined,
+        context: String(t?.context || ''),
+        category: t?.category || 'other',
+        notes: String(t?.notes || ''),
+        aliases: Array.isArray(t?.aliases) ? t.aliases : undefined,
+        why_hard: t?.why_hard || undefined,
+        do_not_translate_as: Array.isArray(t?.do_not_translate_as) ? t.do_not_translate_as : undefined,
+        decision_notes: t?.decision_notes || undefined,
+      } as any);
+    }
+  }
+
+  return {
+    ...arc,
+    start_chunk: Number.isFinite(arc.start_chunk as any) ? arc.start_chunk : start,
+    end_chunk: Number.isFinite(arc.end_chunk as any) ? arc.end_chunk : end,
+    characters,
+    relationships,
+    locations,
+    events,
+    terms,
+  };
+}
+
+function backfillGlossaryFromRaw(
+  arcs: GlossaryArc[],
+  rawChunks: RawChunkExtraction[]
+): GlossaryArc[] {
+  return arcs.map((a) => backfillArcFromRawByChunkRange(a, rawChunks));
+}
+
+async function consolidateFromRawChunksHierarchical(input: RawChunkExtraction[]): Promise<ConsolidatedGlossary> {
+  const targetLanguage = useGlossaryStore.getState().target_language;
+  const languageDirective = getLanguageDirective(targetLanguage);
+  const compact = input.filter(Boolean).map(summarizeRawForLLM);
+
+  // Map phase: consolidate in batches to avoid prompt overflow.
+  const mapBatches = batchByJsonSize(compact, 42000);
+
+  const mapPromptBase = `You are a Korean web novel translation expert.
+${languageDirective}
+
+You will receive RAW per-chunk glossary extractions for a SUBSET of chunks.
+Your task: produce a HIGH-FIDELITY consolidated glossary JSON for THIS subset.
+
+CRITICAL REQUIREMENTS:
+- Do NOT over-summarize. Preserve character richness (speech_style, translation_notes, traits, abilities).
+- Merge duplicate entities within this subset, preserving aliases.
+- Preserve and enrich arc relationships (addressing, relationship_type, sentiment) when present in inputs.
+- Extract TRANSLATION-CRITICAL TERMS (hard decisions). Avoid trivial nouns/titles unless nuance matters.
+- Output ONLY valid JSON (no markdown).
+
+OUTPUT SCHEMA (must include these keys; you may add fields):
+{
+  "arcs": [...],
+  "honorifics": {},
+  "recurring_phrases": {},
+  "style_guide": {}
+}
+`;
+
+  const slices: ConsolidatedGlossary[] = [];
+  for (let i = 0; i < mapBatches.length; i++) {
+    const batch = mapBatches[i];
+    const prompt = `${mapPromptBase}
+
+RAW SUBSET (${i + 1}/${mapBatches.length}):
+${JSON.stringify(batch, null, 2)}
+`;
+    const parsed = await llmConsolidateJson(prompt);
+    slices.push(normalizeConsolidated(parsed));
+  }
+
+  // Reduce phase: iteratively merge slice glossaries until one remains.
+  let current = slices.map((s, idx) => ({
+    sliceIndex: idx,
+    arcs: s.arcs,
+    honorifics: s.honorifics,
+    recurring_phrases: s.recurring_phrases,
+    style_guide: s.style_guide,
+  }));
+
+  const reducePromptBase = `You are a Korean web novel translation expert.
+${languageDirective}
+
+You will receive MULTIPLE already-consolidated glossary slices (JSON).
+Merge them into ONE final glossary JSON.
+
+CRITICAL REQUIREMENTS:
+- ENTITY RESOLUTION across slices (same character with different names/aliases).
+- DO NOT over-collapse arcs. For long works, prefer 6-12 arcs. If there are many slices, do NOT output fewer than 6 arcs unless the story truly has fewer.
+- Preserve rich character fields (keep the best/longest descriptions and union traits/abilities/aliases).
+- Preserve arc-specific relationships and addressing; do not drop them.
+- Terms must be translation-decision oriented (canonical choice + why + allowed variants + avoid list).
+- Output ONLY valid JSON (no markdown).
+
+HARD OUTPUT REQUIREMENTS:
+- Every arc MUST include start_chunk and end_chunk as integers.
+- Every arc MUST include non-empty arrays for characters and relationships when the information exists in slices.
+`;
+
+  while (current.length > 1) {
+    const reduceBatches = batchByJsonSize(current, 42000);
+    const next: any[] = [];
+    for (let i = 0; i < reduceBatches.length; i++) {
+      const prompt = `${reducePromptBase}
+
+GLOSSARY SLICES BATCH (${i + 1}/${reduceBatches.length}):
+${JSON.stringify(reduceBatches[i], null, 2)}
+`;
+      const parsed = await llmConsolidateJson(prompt);
+      const norm = normalizeConsolidated(parsed);
+      next.push({
+        sliceIndex: `merge-${Date.now()}-${i}`,
+        arcs: norm.arcs,
+        honorifics: norm.honorifics,
+        recurring_phrases: norm.recurring_phrases,
+        style_guide: norm.style_guide,
+      });
+    }
+    current = next;
+  }
+
+  const finalParsed = current[0] || {};
+  const normalized = normalizeConsolidated(finalParsed);
+  // Final safety: if the LLM returns arc skeletons, backfill details from raw chunks so the UI isn't empty.
+  return {
+    ...normalized,
+    arcs: backfillGlossaryFromRaw(normalized.arcs, input),
+  };
+}
+
+async function consolidateFromRawChunksWithRetries(
+  input: RawChunkExtraction[]
+): Promise<{
+  arcs: GlossaryArc[];
+  honorifics?: Record<string, string>;
+  recurring_phrases?: Record<string, string>;
+  style_guide?: Partial<StyleGuide>;
+}> {
+  // Attempt 0: Hierarchical LLM consolidation for large projects (avoids prompt overflow).
+  if (input.length >= 20) {
+    try {
+      return await consolidateFromRawChunksHierarchical(input);
+    } catch (e0) {
+      console.warn('⚠️ Hierarchical consolidation failed; falling back to single-shot attempts...', e0);
+    }
+  }
+
+  // Attempt 1: single-shot full raw JSON
+  try {
+    return await consolidateFromRawChunks(input);
+  } catch (e1) {
+    console.warn('⚠️ Raw consolidation attempt 1 failed; retrying with compact-lite payload...', e1);
+  }
+
+  // Attempt 2: reduce payload size to avoid truncation / prompt overflow.
+  const lite: RawChunkExtraction[] = input.map(c => {
+    const raw = c?.raw;
+    const arcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
+    const slimArcs = arcs.map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      theme: a.theme,
+      start_chunk: a.start_chunk,
+      end_chunk: a.end_chunk,
+      // Keep only the minimum needed for entity resolution + arc shaping
+      characters: Array.isArray(a.characters)
+        ? a.characters.map((ch: any) => ({
+            name: ch.name,
+            korean_name: ch.korean_name,
+            aliases: ch.aliases,
+            role: ch.role,
+            occupation: ch.occupation,
+            abilities: ch.abilities,
+            speech_style: ch.speech_style,
+          }))
+        : [],
+      relationships: Array.isArray(a.relationships) ? a.relationships : [],
+      terms: Array.isArray(a.terms)
+        ? a.terms.map((t: any) => ({
+            original: t.original,
+            translation: t.translation,
+            category: t.category,
+            aliases: t.aliases,
+          }))
+        : [],
+      locations: Array.isArray(a.locations)
+        ? a.locations.map((l: any) => ({
+            name: l.name,
+            korean_name: l.korean_name,
+            aliases: l.aliases,
+            type: l.type,
+          }))
+        : [],
+      key_events: Array.isArray(a.key_events) ? a.key_events : [],
+    }));
+
+    return {
+      chunkIndex: c.chunkIndex,
+      extractedAt: c.extractedAt,
+      model: c.model || 'unknown',
+      parseError: c.parseError,
+      raw: {
+        arcs: slimArcs,
+        honorifics: raw?.honorifics,
+        recurring_phrases: raw?.recurring_phrases,
+        style_guide: raw?.style_guide,
+      },
+    };
+  });
+
+  try {
+    return await consolidateFromRawChunks(lite);
+  } catch (e2) {
+    console.warn('⚠️ Raw consolidation attempt 2 failed; falling back to minimal outputs...', e2);
+  }
+
+  // Attempt 3: minimal deterministic result (no LLM reliance)
+  const globals = fallbackAggregateGlobalsFromRaw(input);
+  return {
+    arcs: [],
+    honorifics: globals.honorifics,
+    recurring_phrases: globals.recurring_phrases,
+    style_guide: globals.style_guide,
+  };
+}
+
 export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, get) => ({
   ...initialState,
   reset: () => set({ ...initialState }),
@@ -1123,111 +2334,23 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       return;
     }
 
-    const { arcs, honorifics, recurring_phrases, style_guide } = await extractFromChunk(chunk, chunkIndex);
+    const { arcs, rawChunk } = await extractFromChunk(chunk, chunkIndex);
     console.log(`📦 Received from extractFromChunk: ${arcs?.length || 0} arcs`);
 
-    // Add or update arcs
+    // Persist raw chunk extraction for LLM-driven consolidation later
+    if (rawChunk) {
+      set((state) => ({
+        raw_chunks: upsertRawChunk(state.raw_chunks, rawChunk),
+      }));
+    }
+
+    // NOTE: Do NOT aggressively merge arcs/honorifics/phrases/style guide during chunk processing.
+    // These are often inconsistent per chunk and should be consolidated from raw_chunks by the LLM.
+    // We still keep provisional arcs for progressive UI feedback, but we avoid name-based merging.
     if (arcs && arcs.length > 0) {
-      const existingArcs = get().arcs;
       arcs.forEach((newArc) => {
-        const existing = existingArcs.find(
-          (a) => a.name.toLowerCase() === newArc.name.toLowerCase()
-        );
-        if (existing) {
-          // Merge characters (full GlossaryCharacter objects)
-          const existingCharNames = new Set(existing.characters.map(c => c.name.toLowerCase()));
-          const mergedCharacters = [
-            ...existing.characters,
-            ...newArc.characters.filter(nc => !existingCharNames.has(nc.name.toLowerCase()))
-          ];
-
-          // Merge events
-          const existingEventNames = new Set(existing.events?.map(e => e.name.toLowerCase()) || []);
-          const mergedEvents = [
-            ...(existing.events || []),
-            ...(newArc.events || []).filter(ne => !existingEventNames.has(ne.name.toLowerCase()))
-          ];
-
-          // Merge locations
-          const existingLocationNames = new Set(existing.locations?.map(l => l.name.toLowerCase()) || []);
-          const mergedLocations = [
-            ...(existing.locations || []),
-            ...(newArc.locations || []).filter(nl => !existingLocationNames.has(nl.name.toLowerCase()))
-          ];
-
-          // Merge relationships
-          const existingRelKeys = new Set(
-            existing.relationships.map(r => `${r.character_a}|${r.character_b}`.toLowerCase())
-          );
-          const mergedRelationships = [
-            ...existing.relationships,
-            ...newArc.relationships.filter(nr => {
-              const key = `${nr.character_a}|${nr.character_b}`.toLowerCase();
-              return !existingRelKeys.has(key);
-            })
-          ];
-
-          // Merge terms
-          const existingTerms = new Set(existing.terms.map(t => t.original.toLowerCase()));
-          const mergedTerms = [
-            ...existing.terms,
-            ...newArc.terms.filter(nt => !existingTerms.has(nt.original.toLowerCase()))
-          ];
-
-          // Update existing arc
-          get().updateArc(existing.id, {
-            description: newArc.description || existing.description,
-            theme: newArc.theme || existing.theme,
-            characters: mergedCharacters,
-            events: mergedEvents,
-            locations: mergedLocations,
-            relationships: mergedRelationships,
-            terms: mergedTerms,
-            end_chunk: chunkIndex,
-            key_events: [...new Set([...(existing.key_events || []), ...(newArc.key_events || [])])],
-            background_changes: [...new Set([...(existing.background_changes || []), ...(newArc.background_changes || [])])],
-          });
-        } else {
-          get().addArc(newArc);
-        }
+        get().addArc(newArc);
       });
-    }
-
-    // Merge honorifics and recurring phrases
-    if (honorifics) {
-      set((state) => ({
-        honorifics: { ...state.honorifics, ...honorifics }
-      }));
-    }
-
-    if (recurring_phrases) {
-      set((state) => ({
-        recurring_phrases: { ...state.recurring_phrases, ...recurring_phrases }
-      }));
-    }
-
-    // Merge style guide information
-    if (style_guide && Object.keys(style_guide).length > 0) {
-      set((state) => ({
-        style_guide: {
-          ...state.style_guide,
-          ...style_guide,
-          themes: [...new Set([...(state.style_guide.themes || []), ...(style_guide.themes || [])])],
-          sub_genres: [...new Set([...(state.style_guide.sub_genres || []), ...(style_guide.sub_genres || [])])],
-          narrative_style: {
-            ...state.style_guide.narrative_style,
-            ...(style_guide.narrative_style || {}),
-            common_expressions: [...new Set([
-              ...(state.style_guide.narrative_style?.common_expressions || []),
-              ...(style_guide.narrative_style?.common_expressions || [])
-            ])],
-            atmosphere_descriptors: [...new Set([
-              ...(state.style_guide.narrative_style?.atmosphere_descriptors || []),
-              ...(style_guide.narrative_style?.atmosphere_descriptors || [])
-            ])]
-          }
-        }
-      }));
     }
 
     set({
@@ -1248,12 +2371,55 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }
 
     try {
-      console.log('🔄 Starting Arc-centric consolidation...');
+      console.log('🔄 Starting consolidation (LLM-driven, from raw chunks)...');
 
-      // Consolidate Arcs (All data is within arcs)
-      console.log('📋 Consolidating arcs...');
-      const consolidatedArcs = await consolidateArcs(state.arcs);
-      console.log(`✅ Arcs consolidated: ${state.arcs.length} → ${consolidatedArcs.length}`);
+      let consolidatedArcs: GlossaryArc[] = [];
+      let consolidatedHonorifics: Record<string, string> = {};
+      let consolidatedPhrases: Record<string, string> = {};
+      let consolidatedStyleGuide: Partial<StyleGuide> = {};
+
+      const canUseLLM = !!geminiAPI;
+
+      if (canUseLLM && state.raw_chunks && state.raw_chunks.length >= 2) {
+        console.log(`📦 Using raw_chunks for consolidation: ${state.raw_chunks.length} chunks`);
+        const consolidated = await consolidateFromRawChunksWithRetries(state.raw_chunks);
+        consolidatedArcs = consolidated.arcs || [];
+        consolidatedHonorifics = consolidated.honorifics || {};
+        consolidatedPhrases = consolidated.recurring_phrases || {};
+        consolidatedStyleGuide = consolidated.style_guide || {};
+      } else {
+        // Fallback if LLM not available or raw data missing (backward compatibility)
+        if (!canUseLLM) {
+          console.warn('⚠️ Gemini not initialized; using deterministic fallback from raw_chunks/state');
+        } else {
+          console.warn('⚠️ raw_chunks missing/too small; using deterministic fallback + (optional) arc-only consolidation');
+        }
+        const globals = fallbackAggregateGlobalsFromRaw(state.raw_chunks || []);
+        consolidatedHonorifics = globals.honorifics;
+        consolidatedPhrases = globals.recurring_phrases;
+        consolidatedStyleGuide = globals.style_guide;
+        // Keep arcs as-is (minimum viable output); avoid extra LLM calls.
+        consolidatedArcs = state.arcs.length > 0 ? state.arcs : [];
+      }
+
+      // If LLM consolidation failed to return arcs, keep a minimum viable arc list.
+      if (!consolidatedArcs || consolidatedArcs.length === 0) {
+        consolidatedArcs = state.arcs.length > 0 ? state.arcs : [];
+      }
+
+      // Last-resort attempt: if we do have LLM access but raw-based consolidation couldn't produce arcs,
+      // try the legacy arc-only consolidation (it might salvage usable arc structure).
+      if (canUseLLM && consolidatedArcs.length === 0 && state.arcs.length > 3) {
+        try {
+          console.warn('⚠️ Attempting legacy arc-only consolidation as last resort...');
+          consolidatedArcs = await consolidateArcs(state.arcs);
+        } catch (legacyErr) {
+          console.warn('⚠️ Legacy arc-only consolidation failed; keeping minimum viable arcs.', legacyErr);
+          consolidatedArcs = state.arcs.length > 0 ? state.arcs : [];
+        }
+      }
+
+      console.log(`✅ Consolidation done: ${state.arcs.length} → ${consolidatedArcs.length} arcs`);
 
       // Count totals from within arcs
       const totalCharacters = consolidatedArcs.reduce((sum, arc) => sum + (arc.characters?.length || 0), 0);
@@ -1266,6 +2432,9 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
 
       set({
         arcs: consolidatedArcs,
+        honorifics: Object.keys(consolidatedHonorifics).length > 0 ? consolidatedHonorifics : state.honorifics,
+        recurring_phrases: Object.keys(consolidatedPhrases).length > 0 ? consolidatedPhrases : state.recurring_phrases,
+        style_guide: Object.keys(consolidatedStyleGuide).length > 0 ? { ...state.style_guide, ...consolidatedStyleGuide } : state.style_guide,
         isLoading: false,
       });
 
@@ -1477,8 +2646,13 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     }));
 
     const actionEdges: ActionEdge[] = allEvents.map((event, idx) => {
-      const sourceChar = event.characters_involved[0];
-      const targetChar = event.characters_involved[1] || event.characters_involved[0];
+      const involved = Array.isArray((event as any).characters_involved)
+        ? (event as any).characters_involved.filter(Boolean)
+        : [];
+      if (involved.length === 0) return null;
+
+      const sourceChar = involved[0];
+      const targetChar = involved[1] || involved[0];
 
       return {
         id: `action-${idx}`,
@@ -1494,10 +2668,11 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
           targetLocation: event.location || ''
         }
       } as ActionEdge;
-    }).filter(edge => {
+    }).filter((edge): edge is ActionEdge => {
+      if (!edge) return false;
       const sourceExists = entityNodes.find(n => n.id === edge.source);
       const targetExists = entityNodes.find(n => n.id === edge.target);
-      return sourceExists && targetExists;
+      return !!sourceExists && !!targetExists;
     });
 
     return { entityNodes, actionEdges, locationNodes };
@@ -1745,6 +2920,7 @@ export interface GlossarySnapshot {
   style_guide: StyleGuide;
   target_language: 'en' | 'ja';
   fullText: string;
+  raw_chunks?: RawChunkExtraction[];
   characters?: GlossaryCharacter[];
   events?: GlossaryEvent[];
   locations?: GlossaryLocation[];
@@ -1753,20 +2929,20 @@ export interface GlossarySnapshot {
   world_building_notes?: string[];
 }
 
-const deepClone = <T>(value: T): T => {
+function deepClone<T>(value: T): T {
   if (value === undefined || value === null) {
     return value;
   }
   return JSON.parse(JSON.stringify(value));
-};
+}
 
-const normalizeLegacyCollection = <T>(value?: LegacyCollection<T>): T[] | undefined => {
+function normalizeLegacyCollection<T>(value?: LegacyCollection<T>): T[] | undefined {
   if (!value) return undefined;
   if (Array.isArray(value)) {
     return deepClone(value);
   }
   return Object.values(value).map(item => deepClone(item));
-};
+}
 
 const deriveArcsFromLegacy = (snapshot?: Partial<GlossarySnapshot>): GlossaryArc[] => {
   if (snapshot?.arcs && snapshot.arcs.length > 0) {
@@ -1884,6 +3060,7 @@ const normalizeSnapshot = (
     style_guide: mergeStyleGuide(snapshot?.style_guide),
     target_language: snapshot?.target_language ?? 'en',
     fullText: snapshot?.fullText ?? options?.fullTextFallback ?? '',
+    raw_chunks: snapshot?.raw_chunks ? deepClone(snapshot.raw_chunks) : [],
     characters: normalizedCharacters,
     events: normalizedEvents,
     locations: normalizedLocations,
@@ -1910,6 +3087,7 @@ export const serializeGlossaryState = (state?: GlossaryState): GlossarySnapshot 
     style_guide: deepClone(source.style_guide),
     target_language: source.target_language,
     fullText: source.fullText,
+    raw_chunks: deepClone(source.raw_chunks),
     characters: aggregated.characters,
     events: aggregated.events,
     locations: aggregated.locations,
@@ -1932,6 +3110,7 @@ export const restoreGlossarySnapshot = (
     style_guide: normalized.style_guide,
     target_language: normalized.target_language,
     fullText: normalized.fullText,
+    raw_chunks: normalized.raw_chunks || [],
     isLoading: false,
   });
 
@@ -1982,13 +3161,22 @@ export function generateGlossaryString(state: GlossaryState): string {
     lines.push("");
   });
 
-  lines.push("## Terms & Settings");
+  lines.push("## Terms & Settings (Translation Decisions)");
   const allTerms = new Map<string, string>();
   arcs.forEach(arc => {
     arc.terms.forEach(term => {
-      const key = `${term.original} (${term.translation})`;
+      const canonical = (term.preferred_translation || term.translation || '').trim();
+      const alts = Array.isArray(term.alternatives) && term.alternatives.length > 0
+        ? ` | alts: ${term.alternatives.slice(0, 4).join(', ')}`
+        : '';
+      const key = `${term.original} (${canonical})${alts}`;
       if (!allTerms.has(key)) {
-        allTerms.set(key, term.context);
+        const notesParts: string[] = [];
+        if (term.why_hard) notesParts.push(`why_hard: ${term.why_hard}`);
+        if (term.decision_notes) notesParts.push(`decision: ${term.decision_notes}`);
+        if (term.notes) notesParts.push(`notes: ${term.notes}`);
+        const note = notesParts.length > 0 ? ` | ${notesParts.join(' | ')}` : '';
+        allTerms.set(key, `${term.context || ''}${note}`.trim());
       }
     });
   });

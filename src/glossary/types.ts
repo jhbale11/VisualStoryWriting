@@ -17,5 +17,8 @@ export interface GlossaryProjectRecord {
   glossary?: GlossarySnapshot;
   view?: GlossaryViewState;
   status?: 'pending' | 'processing' | 'ready';
+  // Optional progress metadata so the builder can show chunk-level status mid-run
+  totalChunks?: number;
+  processedChunks?: number;
 }
 

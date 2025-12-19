@@ -1,6 +1,5 @@
 import { RawNodeDatum } from 'react-d3-tree';
 import { create } from 'zustand';
-import { useStudyStore } from '../study/StudyModel';
 import { globalEditor } from '../view/TextEditor';
 import { ModelState, useModelStore } from './Model';
 import { VisualRefresher } from './prompts/textExtractors/VisualRefresher';
@@ -57,8 +56,6 @@ export const useHistoryModelStore = create<HistoryModelState & HistoryModelActio
             if (VisualRefresher.getInstance().onUpdate) {
                 VisualRefresher.getInstance().onUpdate();
             }
-
-            useStudyStore.getState().logEvent("SET_POSITION_IN_HISTORY_TREE", { position });
 
             set((state) => ({ positionInTree: position, redoPositionStack: [] }));
         }

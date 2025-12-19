@@ -4,9 +4,6 @@ import type { TranslationProject, ParagraphMatchResult } from '../../translation
 import TranslationReviewInterface from '../textoshopReview/TranslationReviewInterface';
 import { Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from '@nextui-org/react';
 import { FiX, FiDownload, FiGitMerge } from 'react-icons/fi';
-import { ParagraphMatchingAgent } from '../../translation/agents/ParagraphMatchingAgent';
-import { LayoutAgent } from '../../translation/agents/LayoutAgent';
-import { LLMClientFactory } from '../../translation/llm/clients';
 import { taskRunner } from '../../translation/services/TaskRunner';
 
 interface TranslationReviewProps {
@@ -17,17 +14,26 @@ interface TranslationReviewProps {
 
 export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, initialChunkIndex = 0, onClose }) => {
   const { updateChunk, createTask, tasks } = useTranslationStore();
+  // IMPORTANT: Use live project from store so chunk edits/saves are reflected immediately
+  // (prop `project` can be a snapshot and become stale).
+  const liveProject = useTranslationStore((state) =>
+    state.projects.find(p => p.id === project.id) ||
+    state.archivedProjects.find(p => p.id === project.id)
+  );
+  const effectiveProject = liveProject || project;
   const [currentChunkIndex, setCurrentChunkIndex] = useState(initialChunkIndex);
-  const [isMatching, setIsMatching] = useState(false);
   const [retranslateTaskId, setRetranslateTaskId] = useState<string | null>(null);
+  const [matchTaskId, setMatchTaskId] = useState<string | null>(null);
 
   // Download State
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [downloadFilename, setDownloadFilename] = useState(`${project.name}_reviewed_translation.txt`);
 
-  const currentChunk = project.chunks[currentChunkIndex];
+  const currentChunk = effectiveProject.chunks[currentChunkIndex];
   const retranslateTask = retranslateTaskId ? tasks[retranslateTaskId] : undefined;
   const isRetranslating = retranslateTask?.status === 'running';
+  const matchTask = matchTaskId ? tasks[matchTaskId] : undefined;
+  const isMatching = matchTask?.status === 'running';
 
   // Monitor retranslate task completion
   useEffect(() => {
@@ -41,12 +47,23 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     }
   }, [retranslateTask]);
 
+  // Monitor match task completion
+  useEffect(() => {
+    if (matchTask && matchTask.status === 'completed') {
+      setMatchTaskId(null);
+      alert('Paragraph matching completed successfully!');
+    } else if (matchTask && matchTask.status === 'failed') {
+      setMatchTaskId(null);
+      alert(`Paragraph matching failed: ${matchTask.error || 'Unknown error'}`);
+    }
+  }, [matchTask]);
+
   if (!currentChunk) {
     return <div>No chunk found</div>;
   }
 
   const handleSave = (updatedEnglish: string, updatedMatches?: ParagraphMatchResult) => {
-    updateChunk(project.id, currentChunk.id, {
+    updateChunk(effectiveProject.id, currentChunk.id, {
       translations: {
         ...currentChunk.translations,
         final: updatedEnglish,
@@ -59,25 +76,25 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
   const handleNavigate = (direction: 'prev' | 'next') => {
     if (direction === 'prev' && currentChunkIndex > 0) {
       setCurrentChunkIndex(currentChunkIndex - 1);
-    } else if (direction === 'next' && currentChunkIndex < project.chunks.length - 1) {
+    } else if (direction === 'next' && currentChunkIndex < effectiveProject.chunks.length - 1) {
       setCurrentChunkIndex(currentChunkIndex + 1);
     }
   };
 
   const handleDownloadAllClick = () => {
     // Check if there's content to download
-    const hasContent = project.chunks.some(chunk => chunk.translations.final && chunk.translations.final.trim().length > 0);
+    const hasContent = effectiveProject.chunks.some(chunk => chunk.translations.final && chunk.translations.final.trim().length > 0);
     if (!hasContent) {
       alert('No translations to download yet.');
       return;
     }
-    setDownloadFilename(`${project.name}_reviewed_translation.txt`);
+    setDownloadFilename(`${effectiveProject.name}_reviewed_translation.txt`);
     setIsDownloadModalOpen(true);
   };
 
   const handleDownloadAllConfirm = () => {
     // Collect all final translations
-    const allTranslations = project.chunks
+    const allTranslations = effectiveProject.chunks
       .map((chunk) => {
         const translation = chunk.translations.final || '';
         return translation;
@@ -99,68 +116,26 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
   };
 
   const handleRunParagraphMatching = async () => {
-    setIsMatching(true);
+    if (isMatching) return;
 
-    try {
-      const englishText = currentChunk.translations.final || '';
-
-      if (!englishText) {
-        throw new Error('No English translation found for this chunk');
-      }
-
-      // 1. Run Layout Agent first to ensure correct formatting (double newlines)
-      console.log('Running Layout Agent...');
-      let formattedEnglish = englishText;
-
-      try {
-        // Use project's layout config or default to Gemini
-        const layoutConfig = project.agent_configs.layout || {
-          provider: 'gemini',
-          model: 'gemini-2.5-pro',
-          temperature: 0.3
-        };
-
-        const client = LLMClientFactory.createClient(layoutConfig);
-        const layoutAgent = new LayoutAgent(client, project.language);
-
-        formattedEnglish = await layoutAgent.format(englishText);
-        console.log('Layout formatting completed');
-      } catch (layoutError) {
-        console.error('Layout Agent failed, proceeding with original text:', layoutError);
-        // We continue with original text if layout fails, but warn the user
-        console.warn('Proceeding with paragraph matching using unformatted text due to layout failure');
-      }
-
-      // 2. Run Paragraph Matching with the formatted text
-      console.log('Running Paragraph Matching...');
-      const matchingAgent = new ParagraphMatchingAgent();
-      const koreanText = currentChunk.text;
-
-      const matchResult: ParagraphMatchResult = await matchingAgent.matchParagraphs(
-        koreanText,
-        formattedEnglish
-      );
-
-      // Reconstruct Korean text with the same paragraph breaks as English
-      const reconstructedKoreanText = matchResult.koreanParagraphs.join('\n\n');
-
-      // Save the match result AND the formatted English text
-      updateChunk(project.id, currentChunk.id, {
-        text: reconstructedKoreanText, // Update Korean text with new paragraph breaks
-        translations: {
-          ...currentChunk.translations,
-          final: formattedEnglish, // Update English text with layout formatting
-          paragraphMatches: matchResult,
-        },
-      });
-
-      console.log('Paragraph matching completed:', matchResult);
-    } catch (error) {
-      console.error('Error running paragraph matching:', error);
-      alert(`Error matching paragraphs: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsMatching(false);
+    const englishText = currentChunk.translations.final || '';
+    if (!englishText || !englishText.trim()) {
+      alert('No English translation found for this chunk');
+      return;
     }
+
+    const taskId = createTask({
+      type: 'match_paragraphs',
+      projectId: effectiveProject.id,
+      chunkId: currentChunk.id,
+    });
+    setMatchTaskId(taskId);
+
+    taskRunner.runTask(taskId).catch(error => {
+      console.error('Error running match paragraphs task:', error);
+      alert(`Paragraph matching failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setMatchTaskId(null);
+    });
   };
 
   const handleRetranslate = () => {
@@ -176,7 +151,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     // Create a retranslate task
     const taskId = createTask({
       type: 'retranslate',
-      projectId: project.id,
+      projectId: effectiveProject.id,
       chunkId: currentChunk.id,
     });
 
@@ -225,19 +200,21 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
       )}
 
       <TranslationReviewInterface
-        projectId={project.id}
+        key={currentChunk.id}
+        projectId={effectiveProject.id}
         chunkId={currentChunk.id}
         koreanText={currentChunk.text}
         englishText={currentChunk.translations.final || ''}
         paragraphMatches={currentChunk.translations.paragraphMatches}
+        initialReviewIssues={currentChunk.translations.reviewIssues as any}
         onSave={handleSave}
         onNavigate={handleNavigate}
         onRetranslate={handleRetranslate}
         isRetranslating={isRetranslating}
         canNavigatePrev={currentChunkIndex > 0}
-        canNavigateNext={currentChunkIndex < project.chunks.length - 1}
+        canNavigateNext={currentChunkIndex < effectiveProject.chunks.length - 1}
         chunkIndex={currentChunkIndex}
-        totalChunks={project.chunks.length}
+        totalChunks={effectiveProject.chunks.length}
       />
 
       {/* Download Filename Modal */}

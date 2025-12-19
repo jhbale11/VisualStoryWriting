@@ -6,12 +6,15 @@ import { FaLocationDot } from 'react-icons/fa6';
 import { FiFeather, FiTrash } from 'react-icons/fi';
 import { IoPersonCircle, IoSave } from 'react-icons/io5';
 import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
-import { GlossaryCharacter, GlossaryTerm, useGlossaryStore, generateGlossaryString } from '../model/GlossaryModel';
+import { GlossaryCharacter, GlossaryTerm, useGlossaryStore, generateGlossaryString, restoreGlossarySnapshot, serializeGlossaryState } from '../model/GlossaryModel';
 import { LayoutUtils } from '../model/LayoutUtils';
 import { useModelStore } from '../model/Model';
 import GlossaryEditPanel from './glossary/GlossaryEditPanel';
 import ArcRelationshipGraph from './glossary/ArcRelationshipGraph';
 import CharacterArcMatrix from './glossary/CharacterArcMatrix';
+import { glossaryProjectStorage } from '../glossary/services/GlossaryProjectStorage';
+import type { GlossaryProjectRecord } from '../glossary/types';
+import { applyViewSnapshot, captureViewSnapshot } from '../glossary/utils/viewSnapshots';
 
 function StoryFeaturesTab() {
   const storySummary = useGlossaryStore((state) => state.story_summary);
@@ -677,7 +680,7 @@ export default function GlossaryBuilder() {
   });
   const previousProjectIdRef = React.useRef<string | null>(currentProjectId);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'terms' | 'features' | 'arcs'>('characters');
+  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'terms' | 'features' | 'arcs' | 'raw'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedArcFilter, setSelectedArcFilter] = useState<string | null>(null);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
@@ -705,10 +708,16 @@ export default function GlossaryBuilder() {
   const styleGuide = useGlossaryStore(state => state.style_guide);
   const targetLanguage = useGlossaryStore(state => state.target_language);
   const fullText = useGlossaryStore(state => state.fullText);
+  const rawChunks = useGlossaryStore(state => state.raw_chunks);
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
   const updateArc = useGlossaryStore(state => state.updateArc);
+  const isGlossaryLoading = useGlossaryStore(state => state.isLoading);
+  const processedChunks = useGlossaryStore(state => state.processedChunks);
+  const totalChunks = useGlossaryStore(state => state.totalChunks);
+
+  const [projectMeta, setProjectMeta] = useState<{ name?: string; status?: string; processedChunks?: number; totalChunks?: number } | null>(null);
 
   // Extract all data from arcs - merge character info from all appearances
   const glossaryCharacters = React.useMemo(() => {
@@ -823,6 +832,59 @@ export default function GlossaryBuilder() {
     return () => clearInterval(checkProjectId);
   }, [currentProjectId]);
 
+  const loadFromLegacyLocalStorage = (projectId: string) => {
+    try {
+      const raw = localStorage.getItem('vsw.projects') || '[]';
+      const arr = JSON.parse(raw);
+      const project = arr.find((p: any) => p.id === projectId);
+      if (project && project.glossary) {
+        const glossaryData = project.glossary;
+        useGlossaryStore.setState({
+          arcs: JSON.parse(JSON.stringify(glossaryData.arcs || [])),
+          fullText: glossaryData.fullText || '',
+          story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
+          honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
+          recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
+          style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || useGlossaryStore.getState().style_guide)),
+          target_language: glossaryData.target_language || 'en',
+          raw_chunks: JSON.parse(JSON.stringify(glossaryData.raw_chunks || [])),
+          isLoading: false,
+        });
+        setProjectMeta({
+          name: project.name,
+          status: 'ready',
+        });
+        return true;
+      }
+    } catch (e) {
+      console.warn('[GlossaryBuilder] Legacy localStorage load failed:', e);
+    }
+    return false;
+  };
+
+  const saveToGlossaryStorage = async (projectId: string) => {
+    const existing = await glossaryProjectStorage.getProject(projectId);
+    const snapshot = serializeGlossaryState(useGlossaryStore.getState());
+    const view = captureViewSnapshot();
+    const record: GlossaryProjectRecord = {
+      id: projectId,
+      name: existing?.name || projectMeta?.name || `Glossary Project ${new Date().toLocaleString()}`,
+      updatedAt: Date.now(),
+      glossary: snapshot,
+      view,
+      status: (existing?.status || projectMeta?.status || 'ready') as any,
+      totalChunks: existing?.totalChunks ?? projectMeta?.totalChunks,
+      processedChunks: existing?.processedChunks ?? projectMeta?.processedChunks,
+    };
+    await glossaryProjectStorage.saveProject(record);
+    setProjectMeta({
+      name: record.name,
+      status: record.status,
+      totalChunks: record.totalChunks,
+      processedChunks: record.processedChunks,
+    });
+  };
+
   // Load project data when currentProjectId changes
   useEffect(() => {
     if (!currentProjectId) {
@@ -905,81 +967,51 @@ export default function GlossaryBuilder() {
       });
     }
 
-    // Load new project data
-    try {
-      const raw = localStorage.getItem('vsw.projects') || '[]';
-      const arr = JSON.parse(raw);
-      const project = arr.find((p: any) => p.id === currentProjectId);
+    // Load new project data (Primary: IndexedDB glossaryProjectStorage; fallback: legacy localStorage)
+    (async () => {
+      try {
+        const record = await glossaryProjectStorage.getProject(currentProjectId);
+        if (record?.glossary) {
+          // Avoid clobbering live data when staying on same project and not loading.
+          const currentState = useGlossaryStore.getState();
+          const hasCurrentData = currentState.arcs.length > 0 || (currentState.raw_chunks?.length || 0) > 0;
+          if (!isProjectChanged && hasCurrentData && !currentState.isLoading) {
+            previousProjectIdRef.current = currentProjectId;
+            setProjectMeta({
+              name: record.name,
+              status: record.status,
+              totalChunks: record.totalChunks,
+              processedChunks: record.processedChunks,
+            });
+            applyViewSnapshot(record.view);
+            return;
+          }
 
-      if (project && project.glossary) {
-        const glossaryData = project.glossary;
-        const incomingArcsCount = (glossaryData.arcs || []).length;
-
-        // Check if we should load (don't overwrite if we have current data and this is not a project change)
-        const currentState = useGlossaryStore.getState();
-        const hasCurrentData = currentState.arcs.length > 0;
-
-        if (!isProjectChanged && hasCurrentData && !currentState.isLoading) {
-          console.log(`⏭️ Skipping load: same project with existing data (${currentState.arcs.length} arcs)`);
-          previousProjectIdRef.current = currentProjectId;
+          restoreGlossarySnapshot(record.glossary, {
+            fullTextFallback: record.glossary.fullText || '',
+          });
+          applyViewSnapshot(record.view);
+          setProjectMeta({
+            name: record.name,
+            status: record.status,
+            totalChunks: record.totalChunks,
+            processedChunks: record.processedChunks,
+          });
           return;
         }
 
-        console.log(`📖 Loading project glossary for ${currentProjectId}:`, {
-          incomingArcs: incomingArcsCount,
-        });
-
-        const loadedArcs = JSON.parse(JSON.stringify(glossaryData.arcs || []));
-
-        // Count characters/events/terms for logging
-        let totalChars = 0;
-        let totalEvents = 0;
-        let totalTerms = 0;
-        loadedArcs.forEach((arc: any) => {
-          totalChars += (arc.characters || []).length;
-          totalEvents += (arc.events || []).length;
-          totalTerms += (arc.terms || []).length;
-        });
-
-        useGlossaryStore.setState({
-          arcs: loadedArcs,
-          fullText: glossaryData.fullText || '',
-          story_summary: JSON.parse(JSON.stringify(glossaryData.story_summary || { logline: '', blurb: '' })),
-          honorifics: JSON.parse(JSON.stringify(glossaryData.honorifics || {})),
-          recurring_phrases: JSON.parse(JSON.stringify(glossaryData.recurring_phrases || {})),
-          style_guide: JSON.parse(JSON.stringify(glossaryData.style_guide || {
-            name_format: 'english_given_name english_surname',
-            tone: 'Standard',
-            formality_level: 'medium',
-            themes: [],
-            genre: 'Web Novel',
-            sub_genres: [],
-            content_rating: 'Teen',
-            honorific_usage: 'Keep Korean honorifics with explanation on first use',
-            formal_speech_level: 'Match English formality to Korean speech level',
-            dialogue_style: 'natural',
-            narrative_style: {
-              point_of_view: 'third-person',
-              tense: 'past',
-              voice: 'neutral',
-              common_expressions: [],
-              atmosphere_descriptors: []
-            }
-          })),
-          target_language: glossaryData.target_language || 'en',
-        });
-
-        console.log(`✅ Loaded project: ${currentProjectId}`);
-        console.log(`📊 Loaded glossary: ${incomingArcsCount} arcs, ${totalChars} characters (total in arcs), ${totalEvents} events, ${totalTerms} terms`);
-      } else {
-        console.log(`ℹ️ No glossary data found for project ${currentProjectId}`);
+        // Legacy fallback
+        const ok = loadFromLegacyLocalStorage(currentProjectId);
+        if (!ok) {
+          console.log(`ℹ️ No glossary data found for project ${currentProjectId}`);
+        }
+      } catch (error) {
+        console.error('Failed to load project:', error);
+        loadFromLegacyLocalStorage(currentProjectId);
+      } finally {
+        previousProjectIdRef.current = currentProjectId;
       }
-    } catch (error) {
-      console.error('Failed to load project:', error);
-    }
-
-    // Update previous project ID reference
-    previousProjectIdRef.current = currentProjectId;
+    })();
   }, [currentProjectId]);
 
   // Auto-select first arc when arcs are loaded
@@ -1023,58 +1055,16 @@ export default function GlossaryBuilder() {
           return;
         }
 
-        const raw = localStorage.getItem('vsw.projects') || '[]';
-        const arr = JSON.parse(raw);
-        const projectIndex = arr.findIndex((p: any) => p.id === currentProjectId);
-
-        if (projectIndex >= 0) {
-          const glossaryState = useGlossaryStore.getState();
-
-          // Don't save if currently loading (extraction in progress)
-          if (glossaryState.isLoading) {
-            console.log('⏸️ Skipping auto-save: extraction in progress');
-            return;
-          }
-
-          // Don't save empty glossary if project previously had data
-          const existingProject = arr[projectIndex];
-          const existingArcsCount = existingProject.glossary?.arcs?.length || 0;
-          const currentArcsCount = glossaryState.arcs.length;
-
-          if (currentArcsCount === 0 && existingArcsCount > 0) {
-            console.log(`⏸️ Skipping auto-save: would overwrite ${existingArcsCount} arcs with empty data`);
-            return;
-          }
-
-          // Create a deep copy to avoid reference issues
-          const glossarySnapshot = {
-            arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
-            fullText: glossaryState.fullText,
-            story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
-            honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
-            recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
-            style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
-            target_language: glossaryState.target_language,
-          };
-
-          arr[projectIndex] = {
-            ...arr[projectIndex],
-            updatedAt: Date.now(),
-            glossary: glossarySnapshot,
-            view: {
-              entityNodes: useModelStore.getState().entityNodes,
-              actionEdges: useModelStore.getState().actionEdges,
-              locationNodes: useModelStore.getState().locationNodes,
-              textState: useModelStore.getState().textState,
-              isReadOnly: useModelStore.getState().isReadOnly,
-              relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}')
-            }
-          };
-          localStorage.setItem('vsw.projects', JSON.stringify(arr));
-          console.log(`💾 Auto-saved project: ${currentProjectId} (${currentArcsCount} arcs, ${glossaryCharacters.length} chars)`);
-        } else {
-          console.warn(`⚠️ Project ${currentProjectId} not found in localStorage`);
+        const glossaryState = useGlossaryStore.getState();
+        // Don't save if currently loading (extraction in progress)
+        if (glossaryState.isLoading) {
+          console.log('⏸️ Skipping auto-save: extraction in progress');
+          return;
         }
+
+        saveToGlossaryStorage(currentProjectId).catch((e) => {
+          console.error('❌ Auto-save failed (glossaryProjectStorage):', e);
+        });
       } catch (error) {
         console.error('❌ Auto-save failed:', error);
       }
@@ -1089,7 +1079,8 @@ export default function GlossaryBuilder() {
     recurringPhrases,
     styleGuide,
     targetLanguage,
-    fullText
+    fullText,
+    rawChunks
   ]);
 
   const handleExport = () => {
@@ -1179,6 +1170,16 @@ export default function GlossaryBuilder() {
       <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: 'white', borderBottom: '1px solid #ddd' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>
           Glossary Builder
+          {projectMeta?.name ? (
+            <span style={{ fontSize: '12px', fontWeight: 500, color: '#666', marginLeft: '10px' }}>
+              — {projectMeta.name}
+              {(projectMeta.status === 'processing' || isGlossaryLoading) && (
+                <span style={{ marginLeft: '8px', color: '#2563eb' }}>
+                  (Processing {(projectMeta.processedChunks ?? processedChunks)}/{((projectMeta.totalChunks ?? totalChunks) || '?')}, raw {rawChunks.length})
+                </span>
+              )}
+            </span>
+          ) : null}
         </h1>
         <div style={{ display: 'flex', gap: '10px' }}>
           <Button size="sm" variant="bordered" onClick={() => {
@@ -1187,42 +1188,9 @@ export default function GlossaryBuilder() {
                 console.error('No project ID found');
                 return;
               }
-
-              const raw = localStorage.getItem('vsw.projects') || '[]';
-              const arr = JSON.parse(raw);
-              const glossaryState = useGlossaryStore.getState();
-
-              // Create deep copy to avoid reference issues
-              const glossarySnapshot = {
-                arcs: JSON.parse(JSON.stringify(glossaryState.arcs)),
-                fullText: glossaryState.fullText,
-                story_summary: JSON.parse(JSON.stringify(glossaryState.story_summary)),
-                honorifics: JSON.parse(JSON.stringify(glossaryState.honorifics)),
-                recurring_phrases: JSON.parse(JSON.stringify(glossaryState.recurring_phrases)),
-                style_guide: JSON.parse(JSON.stringify(glossaryState.style_guide)),
-                target_language: glossaryState.target_language,
-              };
-
-              const snapshot = {
-                id: currentProjectId,
-                name: (arr.find((p: any) => p.id === currentProjectId)?.name) || `Project ${new Date().toLocaleString()}`,
-                updatedAt: Date.now(),
-                glossary: glossarySnapshot,
-                view: {
-                  entityNodes: useModelStore.getState().entityNodes,
-                  actionEdges: useModelStore.getState().actionEdges,
-                  locationNodes: useModelStore.getState().locationNodes,
-                  textState: useModelStore.getState().textState,
-                  isReadOnly: useModelStore.getState().isReadOnly,
-                  relationsPositions: JSON.parse(localStorage.getItem('vsw.relations.positions') || '{}')
-                }
-              } as any;
-
-              let next = arr as any[];
-              const idx = arr.findIndex((p: any) => p.id === snapshot.id);
-              if (idx >= 0) { next[idx] = snapshot; } else { next = [snapshot, ...arr]; }
-              localStorage.setItem('vsw.projects', JSON.stringify(next));
-              console.log(`💾 Manually saved project: ${currentProjectId} (${glossaryState.arcs.length} arcs)`);
+              saveToGlossaryStorage(currentProjectId)
+                .then(() => console.log(`💾 Manually saved project (IDB): ${currentProjectId}`))
+                .catch((e) => console.error('Failed to save project:', e));
             } catch (error) {
               console.error('Failed to save project:', error);
             }
@@ -1479,6 +1447,14 @@ export default function GlossaryBuilder() {
                 style={{ cursor: 'pointer' }}
               >
                 Arcs ({glossaryArcs.length})
+              </Chip>
+              <Chip
+                onClick={() => setGlossaryTab('raw')}
+                color={glossaryTab === 'raw' ? 'secondary' : 'default'}
+                variant={glossaryTab === 'raw' ? 'solid' : 'bordered'}
+                style={{ cursor: 'pointer' }}
+              >
+                Raw Chunks ({rawChunks.length})
               </Chip>
               <Chip
                 onClick={() => setGlossaryTab('features')}
@@ -1906,6 +1882,67 @@ export default function GlossaryBuilder() {
             )}
 
             {glossaryTab === 'features' && <StoryFeaturesTab />}
+
+            {glossaryTab === 'raw' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {rawChunks.length === 0 ? (
+                  <div style={{
+                    padding: '40px 20px',
+                    textAlign: 'center',
+                    color: '#999',
+                    background: '#f9fafb',
+                    borderRadius: '12px'
+                  }}>
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🧩</div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
+                      No Raw Chunk Extractions Yet
+                    </div>
+                    <div style={{ fontSize: '13px' }}>
+                      If extraction is running, open this tab again in a moment—raw chunks will stream in as they complete.
+                    </div>
+                  </div>
+                ) : (
+                  rawChunks
+                    .slice()
+                    .sort((a, b) => a.chunkIndex - b.chunkIndex)
+                    .map((rc) => (
+                      <Card key={`raw-${rc.chunkIndex}`} style={{ background: '#fff' }}>
+                        <CardHeader>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ fontWeight: 'bold' }}>
+                              Chunk #{rc.chunkIndex + 1} <span style={{ color: '#888', fontWeight: 500 }}>({rc.model})</span>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#666' }}>
+                              Extracted: {rc.extractedAt}
+                              {rc.parseError ? <span style={{ color: '#dc2626', marginLeft: '8px' }}>ParseError: {rc.parseError}</span> : null}
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <Divider />
+                        <CardBody>
+                          <Textarea
+                            label="Raw JSON (LLM output)"
+                            value={JSON.stringify(rc.raw ?? {}, null, 2)}
+                            minRows={6}
+                            size="sm"
+                            readOnly
+                          />
+                          {rc.rawText ? (
+                            <Textarea
+                              label="Raw Text (for debugging)"
+                              value={String(rc.rawText)}
+                              minRows={4}
+                              size="sm"
+                              readOnly
+                              className="mt-3"
+                            />
+                          ) : null}
+                        </CardBody>
+                      </Card>
+                    ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

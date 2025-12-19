@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Divider, Modal, ModalBody, ModalContent, ModalHeader, Textarea, useDisclosure } from '@nextui-org/react';
 import { Editor, Transforms, Node as SlateNode } from 'slate';
 import { ReactEditor } from 'slate-react';
@@ -25,6 +25,7 @@ import { renderToString } from 'react-dom/server';
 import './index.css';
 
 import type { ParagraphMatchResult } from '../../translation/types';
+import { browserStorage } from '../../translation/services/BrowserStorage';
 
 interface TranslationReviewInterfaceProps {
   projectId: string;
@@ -32,6 +33,7 @@ interface TranslationReviewInterfaceProps {
   koreanText: string;
   englishText: string;
   paragraphMatches?: ParagraphMatchResult;
+  initialReviewIssues?: ReviewIssue[];
   onSave: (updatedEnglish: string, updatedMatches?: ParagraphMatchResult) => void;
   onNavigate: (direction: 'prev' | 'next') => void;
   onRetranslate?: () => void;
@@ -100,103 +102,13 @@ const computeParagraphRanges = (text: string, paragraphs: string[]): Array<{ sta
 
 const normalizeParagraph = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
-interface ParagraphAnchor {
-  oldIdx: number;
-  newIdx: number;
-}
+// NOTE: buildParagraphAnchors/assignGapMappings were used by an older remap strategy.
+// We now remap using containment heuristics so merged paragraphs preserve KR slices.
 
-const buildParagraphAnchors = (oldParas: string[], newParas: string[]): ParagraphAnchor[] => {
-  const oldNorm = oldParas.map(normalizeParagraph);
-  const newNorm = newParas.map(normalizeParagraph);
-  const oldLen = oldNorm.length;
-  const newLen = newNorm.length;
-
-  if (oldLen === 0 || newLen === 0) {
-    return [];
-  }
-
-  const dp: number[][] = Array.from({ length: oldLen + 1 }, () => new Array(newLen + 1).fill(0));
-
-  for (let i = oldLen - 1; i >= 0; i--) {
-    for (let j = newLen - 1; j >= 0; j--) {
-      if (oldNorm[i] === newNorm[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
-
-  const anchors: ParagraphAnchor[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < oldLen && j < newLen) {
-    if (oldNorm[i] === newNorm[j]) {
-      anchors.push({ oldIdx: i, newIdx: j });
-      i++;
-      j++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      i++;
-    } else {
-      j++;
-    }
-  }
-  return anchors;
-};
-
-const assignGapMappings = (
-  mapping: Array<number | null>,
-  oldStart: number,
-  oldEnd: number,
-  newStart: number,
-  newEnd: number,
-  prevOld: number,
-  nextOld: number | null
-) => {
-  const newLen = newEnd - newStart;
-  if (newLen <= 0) {
-    return;
-  }
-
-  const oldLen = Math.max(oldEnd - oldStart, 0);
-
-  if (oldLen <= 0) {
-    const fallback = prevOld >= 0 ? prevOld : (nextOld ?? 0);
-    for (let newIdx = newStart; newIdx < newEnd; newIdx++) {
-      mapping[newIdx] = fallback;
-    }
-    return;
-  }
-
-  if (newLen === oldLen) {
-    for (let offset = 0; offset < newLen; offset++) {
-      mapping[newStart + offset] = oldStart + offset;
-    }
-    return;
-  }
-
-  if (newLen > oldLen) {
-    let currentNew = newStart;
-    for (let oldIdx = oldStart; oldIdx < oldEnd; oldIdx++) {
-      const remainingOld = oldEnd - oldIdx;
-      const remainingNew = newEnd - currentNew;
-      const share = Math.max(1, Math.round(remainingNew / remainingOld));
-      for (let assigned = 0; assigned < share && currentNew < newEnd; assigned++) {
-        mapping[currentNew++] = oldIdx;
-      }
-    }
-    while (currentNew < newEnd) {
-      mapping[currentNew++] = oldEnd - 1;
-    }
-    return;
-  }
-
-  for (let newIdx = newStart; newIdx < newEnd; newIdx++) {
-    mapping[newIdx] = oldStart;
-  }
-};
-
-const remapParagraphMatches = (matchResult: ParagraphMatchResult, updatedEnglish: string): ParagraphMatchResult => {
+const remapParagraphMatches = (
+  matchResult: ParagraphMatchResult,
+  updatedEnglish: string
+): ParagraphMatchResult => {
   const newEnglishParagraphs = splitTextIntoParagraphs(updatedEnglish);
   const baseEnglishParagraphs = matchResult.englishParagraphs && matchResult.englishParagraphs.length > 0
     ? matchResult.englishParagraphs
@@ -205,77 +117,107 @@ const remapParagraphMatches = (matchResult: ParagraphMatchResult, updatedEnglish
   if (newEnglishParagraphs.length === 0) {
     return {
       englishParagraphs: [],
-      koreanParagraphs: matchResult.koreanParagraphs,
+      koreanParagraphs: [],
+      unmatchedKorean: matchResult.unmatchedKorean,
       matches: [],
     };
   }
 
-  const anchors = buildParagraphAnchors(baseEnglishParagraphs, newEnglishParagraphs);
-  const mapping: Array<number | null> = new Array(newEnglishParagraphs.length).fill(null);
+  // Remap aligned Korean paragraphs in a way that preserves Korean content on EN merge
+  // and avoids duplicating Korean content on EN split.
+  //
+  // - If EN paragraphs were merged: concatenate the corresponding old aligned KR slices.
+  // - If EN paragraphs were split: keep the KR slice only on the FIRST resulting EN paragraph
+  //   and leave subsequent split parts empty (so we can 표시: "EN exists but KR doesn't").
+  const oldAligned = matchResult.koreanParagraphs || [];
+  const oldNorm = baseEnglishParagraphs.map(normalizeParagraph);
+  const newNorm = newEnglishParagraphs.map(normalizeParagraph);
 
-  let prevOld = -1;
-  let prevNew = -1;
+  const paragraphMap: number[] = new Array(newEnglishParagraphs.length).fill(0);
+  const newAligned: string[] = new Array(newEnglishParagraphs.length).fill('');
+  const usedOldOnce = new Set<number>();
 
-  anchors.forEach((anchor) => {
-    assignGapMappings(
-      mapping,
-      prevOld + 1,
-      anchor.oldIdx,
-      prevNew + 1,
-      anchor.newIdx,
-      prevOld,
-      anchor.oldIdx
-    );
-    mapping[anchor.newIdx] = anchor.oldIdx;
-    prevOld = anchor.oldIdx;
-    prevNew = anchor.newIdx;
-  });
-
-  assignGapMappings(
-    mapping,
-    prevOld + 1,
-    baseEnglishParagraphs.length,
-    prevNew + 1,
-    newEnglishParagraphs.length,
-    prevOld,
-    null
-  );
-
-  const paragraphMap = mapping.map((oldIdx, newIdx) => {
-    if (oldIdx === null || isNaN(oldIdx)) {
-      if (baseEnglishParagraphs.length === 0) {
-        return 0;
-      }
-      return Math.min(Math.max(newIdx, 0), baseEnglishParagraphs.length - 1);
+  for (let newIdx = 0; newIdx < newEnglishParagraphs.length; newIdx++) {
+    const n = newNorm[newIdx];
+    if (!n) {
+      paragraphMap[newIdx] = Math.min(newIdx, Math.max(0, baseEnglishParagraphs.length - 1));
+      continue;
     }
-    return Math.min(Math.max(oldIdx, 0), baseEnglishParagraphs.length - 1);
-  });
-  const englishToKorean = new Map<number, number>();
-  matchResult.matches.forEach(match => {
-    englishToKorean.set(match.englishIndex, match.koreanIndex);
-  });
 
-  const koreanLength = matchResult.koreanParagraphs.length;
-  const safeKoreanIndex = (idx: number) => {
-    if (koreanLength === 0) return 0;
-    return Math.min(Math.max(idx, 0), koreanLength - 1);
+    // Find all old paragraphs whose text is contained within this new paragraph (merge case),
+    // OR the old paragraph contains this new paragraph (split case).
+    const hits: number[] = [];
+    for (let oldIdx = 0; oldIdx < oldNorm.length; oldIdx++) {
+      const o = oldNorm[oldIdx];
+      if (!o) continue;
+      if (n.includes(o) || o.includes(n)) {
+        hits.push(oldIdx);
+      }
+    }
+
+    if (hits.length === 0) {
+      const fallbackOld = Math.min(newIdx, Math.max(0, oldNorm.length - 1));
+      paragraphMap[newIdx] = fallbackOld;
+      newAligned[newIdx] = oldAligned[fallbackOld] ?? '';
+      continue;
+    }
+
+    // Keep order and avoid duplicates
+    const uniqueHits = Array.from(new Set(hits)).sort((a, b) => a - b);
+    paragraphMap[newIdx] = uniqueHits[0];
+
+    if (uniqueHits.length === 1) {
+      const oldIdx = uniqueHits[0];
+      if (usedOldOnce.has(oldIdx)) {
+        newAligned[newIdx] = '';
+      } else {
+        usedOldOnce.add(oldIdx);
+        newAligned[newIdx] = oldAligned[oldIdx] ?? '';
+      }
+    } else {
+      // Merge aligned KR slices for merged EN paragraph
+      newAligned[newIdx] = uniqueHits
+        .map(i => oldAligned[i] ?? '')
+        .filter(s => s.trim().length > 0)
+        .join('\n\n');
+    }
+  }
+
+  // Remap unmatchedKorean insert positions using paragraphMap (newIdx -> oldIdx).
+  const oldLen = baseEnglishParagraphs.length;
+  const newLen = newEnglishParagraphs.length;
+  const oldToNewBuckets: number[][] = Array.from({ length: oldLen + 1 }, () => []);
+  paragraphMap.forEach((oldIdx, newIdx) => {
+    if (oldIdx >= 0 && oldIdx < oldLen) {
+      oldToNewBuckets[oldIdx].push(newIdx);
+    }
+  });
+  const mapBeforePos = (beforeOld: number) => {
+    if (beforeOld <= 0) return 0;
+    if (beforeOld >= oldLen) return newLen;
+    // find smallest newIdx whose mapped oldIdx >= beforeOld
+    for (let newIdx = 0; newIdx < paragraphMap.length; newIdx++) {
+      if (paragraphMap[newIdx] >= beforeOld) return newIdx;
+    }
+    return newLen;
   };
+  const newUnmatched = (matchResult.unmatchedKorean || []).map(u => ({
+    beforeEnglishIndex: mapBeforePos(u.beforeEnglishIndex),
+    text: u.text,
+  }));
 
-  const newMatches = paragraphMap.map((oldIdx, newIdx) => {
-    const fallback = safeKoreanIndex(oldIdx);
-    const koreanIndex = englishToKorean.has(oldIdx) ? englishToKorean.get(oldIdx)! : fallback;
-    return {
-      englishIndex: newIdx,
-      koreanIndex: safeKoreanIndex(koreanIndex),
-    };
-  });
+  const newMatches = newEnglishParagraphs.map((_, idx) => ({ englishIndex: idx, koreanIndex: idx }));
 
   return {
     englishParagraphs: newEnglishParagraphs,
-    koreanParagraphs: matchResult.koreanParagraphs,
+    koreanParagraphs: newAligned,
+    unmatchedKorean: newUnmatched,
     matches: newMatches,
   };
 };
+
+// NOTE: english->korean paragraph mapping for the "immutable KR panel" mode was removed.
+// Korean panel now follows EN layout and uses `effectiveMatches.koreanParagraphs` + `effectiveMatches.unmatchedKorean`.
 
 const getEditorPlainText = (): string => {
   const editor = textFieldEditors['translationField'];
@@ -295,6 +237,36 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const sentenceHovered = useViewModelStore(state => state.sentenceHovered);
   const setSentenceHovered = useViewModelStore(state => state.setSentenceHovered);
   const canonicalEnglishText = useMemo(() => normalizeParagraphBreaks(props.englishText || ''), [props.englishText]);
+  // Keep raw Korean for review prompt and inline display (matching output provides aligned Korean paragraphs)
+
+  // Keep full Korean text for review prompt; aligned KR display is driven by paragraphMatches.
+
+  // Track live English text while editing (split/merge/add) so Korean layout follows English immediately.
+  const [englishTextLive, setEnglishTextLive] = useState<string>(canonicalEnglishText);
+  const lastEnglishLiveRef = useRef<string>(canonicalEnglishText);
+
+  useEffect(() => {
+    // reset when chunk changes / prop changes
+    setEnglishTextLive(canonicalEnglishText);
+    lastEnglishLiveRef.current = canonicalEnglishText;
+  }, [canonicalEnglishText, props.chunkId]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const next = getEditorPlainText();
+      if (!next) return;
+      if (next !== lastEnglishLiveRef.current) {
+        lastEnglishLiveRef.current = next;
+        setEnglishTextLive(next);
+      }
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [props.chunkId]);
+
+  const englishParagraphsForLayout = useMemo(
+    () => splitTextIntoParagraphs(englishTextLive),
+    [englishTextLive]
+  );
 
   const [draggedElementId, setDraggedElementId] = useState<string>('');
   const [elementDroppedTimestamp, setElementDroppedTimestamp] = useState<number>(0);
@@ -306,94 +278,157 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const [parsedIssues, setParsedIssues] = useState<ReviewIssue[]>([]);
   const [issuePositions, setIssuePositions] = useState<{ top: number, left: number, textRect: DOMRect }[]>([]);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
+  const reviewLoadedKeyRef = useRef<string | null>(null);
 
-  // localStorage key for this chunk's review
+  // Best-effort: derive stable start/end offsets so we can anchor cards even when the text changes a bit.
+  // This is intentionally conservative (exact substring search only).
+  const withIssueOffsets = (issues: ReviewIssue[], englishText: string): ReviewIssue[] => {
+    if (!englishText || issues.length === 0) return issues;
+    let cursor = 0;
+    return issues.map((iss) => {
+      if (typeof iss.start === 'number' && typeof iss.end === 'number' && iss.end > iss.start) {
+        return iss;
+      }
+      if (!iss.text) return iss;
+      let at = englishText.indexOf(iss.text, cursor);
+      if (at < 0) at = englishText.indexOf(iss.text);
+      if (at >= 0) {
+        cursor = at + iss.text.length;
+        return { ...iss, start: at, end: at + iss.text.length };
+      }
+      return iss;
+    });
+  };
+
+  // localStorage key for backward-compatible fallback (active chunk only)
   const reviewStorageKey = `review_${props.projectId}_${props.chunkId}`;
 
-  // Load saved review from localStorage on mount or chunk change
+  // Load saved review from IndexedDB (fallback to localStorage for legacy)
   useEffect(() => {
+    let cancelled = false;
+    // Prevent cross-chunk bleed: mark not loaded for this key synchronously.
+    reviewLoadedKeyRef.current = null;
     setIsReviewLoaded(false);
-    try {
-      const savedReview = localStorage.getItem(reviewStorageKey);
-      console.log(`[Review] Attempting to load review from localStorage for chunk ${props.chunkId}`, savedReview ? `(${savedReview.length} chars)` : '(none)');
-      if (savedReview) {
-        const parsed = JSON.parse(savedReview) as ReviewIssue[];
-        setParsedIssues(parsed);
-        console.log(`[Review] ✅ Loaded ${parsed.length} issues from localStorage for chunk ${props.chunkId}`);
-      } else {
-        // Clear issues when switching to a chunk with no saved review
-        setParsedIssues([]);
-        console.log(`[Review] No saved review found for chunk ${props.chunkId}`);
+    // Clear UI immediately for new chunk
+    setParsedIssues([]);
+    setIssuePositions([]);
+    (async () => {
+      try {
+        const saved = await browserStorage.getReview(props.projectId, props.chunkId);
+        if (cancelled) return;
+        if (saved) {
+          const textNow = getEditorPlainText();
+          const seeded = textNow ? withIssueOffsets(saved as ReviewIssue[], textNow) : (saved as ReviewIssue[]);
+          setParsedIssues(seeded);
+          console.log(`[Review] ✅ Loaded ${saved.length} issues from IndexedDB for chunk ${props.chunkId}`);
+        } else {
+          // If no saved review exists, seed from workflow-produced issues (if any)
+          if (props.initialReviewIssues && props.initialReviewIssues.length > 0) {
+            const textNow = getEditorPlainText();
+            const seeded = textNow ? withIssueOffsets(props.initialReviewIssues, textNow) : props.initialReviewIssues;
+            setParsedIssues(seeded);
+            console.log(`[Review] Seeded ${props.initialReviewIssues.length} issues from workflow for chunk ${props.chunkId}`);
+          } else {
+            setParsedIssues([]);
+          }
+          console.log(`[Review] No saved review found for chunk ${props.chunkId} in IndexedDB`);
+        }
+        // Clean up legacy localStorage entry for this chunk
+        try { localStorage.removeItem(reviewStorageKey); } catch { /* ignore */ }
+      } catch (e) {
+        console.error('[Review] ❌ Failed to load review from IndexedDB, falling back to localStorage:', e);
+        try {
+          const savedReview = localStorage.getItem(reviewStorageKey);
+          if (savedReview) {
+            const parsed = JSON.parse(savedReview) as ReviewIssue[];
+            if (!cancelled) {
+              setParsedIssues(parsed);
+              console.log(`[Review] ✅ Loaded ${parsed.length} issues from localStorage for chunk ${props.chunkId}`);
+            }
+          } else if (!cancelled) {
+            setParsedIssues([]);
+          }
+        } catch (err) {
+          console.error('[Review] ❌ Failed to load saved review from localStorage:', err);
+          if (!cancelled) setParsedIssues([]);
+        }
+      } finally {
+        if (!cancelled) {
+          reviewLoadedKeyRef.current = reviewStorageKey;
+          setIsReviewLoaded(true);
+        }
       }
-    } catch (e) {
-      console.error('[Review] ❌ Failed to load saved review from localStorage:', e);
-      setParsedIssues([]);
-    }
-    setIsReviewLoaded(true);
-  }, [reviewStorageKey, props.chunkId]);
+    })();
+    return () => { cancelled = true; };
+  }, [reviewStorageKey, props.chunkId, props.projectId, props.initialReviewIssues]);
 
-  // Save review to localStorage whenever parsedIssues changes (but only after initial load)
+  // Save review to IndexedDB (fallback to localStorage) whenever parsedIssues changes
   useEffect(() => {
-    if (!isReviewLoaded) {
+    if (!isReviewLoaded || reviewLoadedKeyRef.current !== reviewStorageKey) {
       console.log(`[Review] Skipping save - review not yet loaded for chunk ${props.chunkId}`);
       return;
     }
 
-    if (parsedIssues.length > 0) {
+    let cancelled = false;
+    (async () => {
       try {
-        localStorage.setItem(reviewStorageKey, JSON.stringify(parsedIssues));
-        console.log(`[Review] ✅ Saved ${parsedIssues.length} issues to localStorage for chunk ${props.chunkId}`);
+        if (parsedIssues.length > 0) {
+          await browserStorage.saveReview(props.projectId, props.chunkId, parsedIssues as any);
+          if (cancelled) return;
+          // Remove legacy localStorage copy to keep quota low
+          try { localStorage.removeItem(reviewStorageKey); } catch { /* ignore */ }
+          console.log(`[Review] ✅ Saved ${parsedIssues.length} issues to IndexedDB for chunk ${props.chunkId}`);
+        } else {
+          await browserStorage.deleteReview(props.projectId, props.chunkId);
+          if (cancelled) return;
+          try { localStorage.removeItem(reviewStorageKey); } catch { /* ignore */ }
+          console.log(`[Review] 🗑️ Removed review entry for chunk ${props.chunkId} from IndexedDB/localStorage`);
+        }
       } catch (e) {
-        console.error('[Review] ❌ Failed to save review to localStorage:', e);
+        console.error('[Review] ❌ Failed to save review to IndexedDB, attempting localStorage fallback:', e);
+        try {
+          if (parsedIssues.length > 0) {
+            localStorage.setItem(reviewStorageKey, JSON.stringify(parsedIssues));
+          } else {
+            localStorage.removeItem(reviewStorageKey);
+          }
+        } catch (err) {
+          console.error('[Review] ❌ Failed to save review to localStorage fallback:', err);
+        }
       }
-    } else {
-      // Remove from localStorage if no issues (but only if we've loaded already)
-      try {
-        localStorage.removeItem(reviewStorageKey);
-        console.log(`[Review] 🗑️ Removed review from localStorage for chunk ${props.chunkId}`);
-      } catch (e) {
-        console.error('[Review] ❌ Failed to remove review from localStorage:', e);
-      }
-    }
-  }, [parsedIssues, reviewStorageKey, props.chunkId, isReviewLoaded]);
+    })();
+
+    return () => { cancelled = true; };
+  }, [parsedIssues, reviewStorageKey, props.chunkId, props.projectId, isReviewLoaded]);
 
   // Paragraph matching state
-  const [matchingLines, setMatchingLines] = useState<Array<{ x1: number, y1: number, x2: number, y2: number }>>([]);
+  const [matchingLines, setMatchingLines] = useState<Array<{ x1: number, y1: number, x2: number, y2: number, englishIndex: number, hasKorean: boolean }>>([]);
   const [activeEnglishParagraphIndex, setActiveEnglishParagraphIndex] = useState<number | null>(null);
 
-  const englishToKoreanMap = useMemo(() => {
-    const map = new Map<number, number>();
-    props.paragraphMatches?.matches.forEach(match => {
-      map.set(match.englishIndex, match.koreanIndex);
-    });
-    return map;
-  }, [props.paragraphMatches]);
-
-  const activeKoreanParagraphIndex = useMemo(() => {
-    if (activeEnglishParagraphIndex === null) {
-      return null;
+  // Build usage maps so we can:
+  // - draw arrows that reflect split/merge (multiple EN->one KO)
+  // - highlight missing/unmapped Korean and show it inline in the English-layout Korean panel
+  const effectiveMatches = useMemo(() => {
+    if (!props.paragraphMatches) return undefined;
+    if (props.paragraphMatches.englishParagraphs.length === englishParagraphsForLayout.length) {
+      return props.paragraphMatches;
     }
-    if (props.paragraphMatches) {
-      if (englishToKoreanMap.has(activeEnglishParagraphIndex)) {
-        return englishToKoreanMap.get(activeEnglishParagraphIndex) ?? null;
-      }
-      return null;
-    }
-    return activeEnglishParagraphIndex;
-  }, [activeEnglishParagraphIndex, props.paragraphMatches, englishToKoreanMap]);
+    // If the user split/merged paragraphs but hasn't saved yet, keep the display aligned by remapping on the fly.
+    return remapParagraphMatches(props.paragraphMatches, englishTextLive);
+  }, [props.paragraphMatches, englishParagraphsForLayout.length, englishTextLive]);
 
-  // Get Korean paragraphs (either from paragraphMatches or split by \n\n)
-  const koreanParagraphs = props.paragraphMatches
-    ? props.paragraphMatches.koreanParagraphs
-    : props.koreanText.split(/\n\n+/).filter(p => p.trim().length > 0);
+  const activeKoreanRowIndex = activeEnglishParagraphIndex;
+
+  // Korean panel is English-layout aligned, but Korean content is sourced from fullKoreanParagraphs
+  // and missing/unmapped Korean is inserted inline and highlighted (never omitted).
 
   // Update paragraph matching lines based on text content
   useEffect(() => {
-    if (!props.paragraphMatches) {
+    if (!effectiveMatches) {
       setMatchingLines([]);
       return;
     }
-    const matchResult = props.paragraphMatches;
+    const matchResult = effectiveMatches;
 
     const updateMatchingLines = () => {
       const background = document.getElementById('background');
@@ -403,23 +438,24 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       if (!background || !transField || !koreanPanel) return;
 
       const bgRect = background.getBoundingClientRect();
-      const lines: Array<{ x1: number, y1: number, x2: number, y2: number }> = [];
+      const lines: Array<{ x1: number, y1: number, x2: number, y2: number, englishIndex: number, hasKorean: boolean }> = [];
 
-      // Get Korean paragraph elements
-      const koreanParas = document.querySelectorAll('.korean-paragraph');
+      // Get Korean row anchors (one per EN paragraph row)
+      const koreanRows = document.querySelectorAll('.korean-row-anchor');
 
-      // Get English text and split by \n\n to find paragraph positions
+      // IMPORTANT: Use the same "live" English text/paragraph list that drives the Korean panel rows.
+      // This prevents drift where lines are computed from a slightly different paragraph split.
       const editor = textFieldEditors['translationField'];
       if (!editor) return;
 
-      const englishText = getEditorPlainText();
+      const englishText = englishTextLive;
       if (!englishText) {
         setMatchingLines([]);
         return;
       }
 
-      const englishParagraphs = splitTextIntoParagraphs(englishText);
-      console.log('Korean paragraphs:', koreanParas.length);
+      const englishParagraphs = englishParagraphsForLayout;
+      console.log('Korean row anchors:', koreanRows.length);
       console.log('English paragraphs (by \\n\\n):', englishParagraphs.length);
       console.log('Originally matched:', matchResult?.matches.length || 0);
 
@@ -456,22 +492,30 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       const contentEditable = transField.querySelector('[contenteditable="true"]');
       if (!contentEditable) return;
 
-      const matches = matchResult.matches || [];
-      matches.forEach(match => {
-        const koreanPara = koreanParas[match.koreanIndex] as HTMLElement | undefined;
-        const englishPos = englishParaPositions[match.englishIndex];
-        if (!koreanPara || !englishPos) {
-          return;
-        }
-
-        const koreanRect = koreanPara.getBoundingClientRect();
-        const x1 = koreanRect.right - bgRect.left;
-        const y1 = koreanRect.top + koreanRect.height / 2 - bgRect.top;
-        const x2 = contentEditable.getBoundingClientRect().left - bgRect.left;
-        const y2 = englishPos.top + englishPos.height / 2 - bgRect.top;
-
-        lines.push({ x1, y1, x2, y2 });
+      const koreanRowByEnglish = new Map<number, HTMLElement>();
+      koreanRows.forEach((el) => {
+        const node = el as HTMLElement;
+        const raw = node.getAttribute('data-english-idx');
+        if (!raw) return;
+        const idx = Number(raw);
+        if (!isNaN(idx)) koreanRowByEnglish.set(idx, node);
       });
+
+      // Draw one line per EN paragraph row. If KR is missing for that row, draw a faint line.
+      for (let enIdx = 0; enIdx < englishParagraphs.length; enIdx++) {
+        const englishPos = englishParaPositions[enIdx];
+        const koreanRow = koreanRowByEnglish.get(enIdx);
+        if (!englishPos || !koreanRow) continue;
+        const koreanRect = koreanRow.getBoundingClientRect();
+
+        const x1 = koreanRect.right - bgRect.left;
+        const y1 = (koreanRect.top + koreanRect.height / 2 - bgRect.top);
+        const x2 = contentEditable.getBoundingClientRect().left - bgRect.left;
+        const y2 = (englishPos.top + englishPos.height / 2 - bgRect.top);
+
+        const hasKorean = ((matchResult?.koreanParagraphs || [])[enIdx] || '').trim().length > 0;
+        lines.push({ x1, y1, x2, y2, englishIndex: enIdx, hasKorean });
+      }
 
       console.log('Matching lines drawn:', lines.length);
       setMatchingLines(lines);
@@ -485,13 +529,13 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       window.clearTimeout(timeoutId);
       window.removeEventListener('resize', updateMatchingLines);
     };
-  }, [props.paragraphMatches, props.koreanText, canonicalEnglishText]);
+  }, [effectiveMatches, props.koreanText, englishTextLive, englishParagraphsForLayout]);
 
   // Track active English paragraph based on cursor position in text
   useEffect(() => {
     const handleSelectionChange = () => {
       const editor = textFieldEditors['translationField'];
-      if (!editor || !props.paragraphMatches) return;
+      if (!editor || !effectiveMatches) return;
 
       try {
         const { selection } = editor;
@@ -522,7 +566,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         });
 
         // Only highlight if within matched range
-        const matchedCount = props.paragraphMatches.matches.length;
+        const matchedCount = effectiveMatches.matches.length;
         if (foundParaIndex >= 0 && foundParaIndex < matchedCount) {
           setActiveEnglishParagraphIndex(foundParaIndex);
         } else {
@@ -539,7 +583,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [props.paragraphMatches]);
+  }, [effectiveMatches]);
 
   // Initialize the model with English text field only - only on mount or when chunk changes
   useEffect(() => {
@@ -628,6 +672,13 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       return () => clearTimeout(timer);
     }
   }, [parsedIssues]);
+
+  // Recalculate positions when English text changes (split/merge/edit can invalidate anchors)
+  useEffect(() => {
+    if (parsedIssues.length === 0) return;
+    const timer = setTimeout(() => findIssuePositions(), 250);
+    return () => clearTimeout(timer);
+  }, [englishTextLive, parsedIssues.length]);
 
   // Update card positions on scroll
   useEffect(() => {
@@ -887,7 +938,9 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
       console.log('Number of issues:', parsed?.issues?.length || 0);
       if (parsed && parsed.issues && parsed.issues.length > 0) {
         setReviewText(JSON.stringify(parsed, null, 2));
-        setParsedIssues(parsed.issues);
+        // Precompute offsets so cards can anchor reliably.
+        const withOffsets = withIssueOffsets(parsed.issues, en);
+        setParsedIssues(withOffsets);
         if (parsed.issues.length < 10) {
           console.warn('⚠️ WARNING: Only', parsed.issues.length, 'issues returned (expected 10+)');
         }
@@ -1019,8 +1072,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
         }}
       >
         {matchingLines.map((line, idx) => {
-          // Only highlight if the active paragraph is within matched range
-          const isActive = activeEnglishParagraphIndex === idx;
+          const isActive = activeEnglishParagraphIndex === line.englishIndex;
           return (
             <line
               key={idx}
@@ -1031,7 +1083,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
               stroke={isActive ? "#ff6b6b" : "#4a90e2"}
               strokeWidth={isActive ? "2.5" : "1.5"}
               strokeDasharray="5,5"
-              opacity={isActive ? "0.9" : "0.5"}
+              opacity={isActive ? "0.9" : (line.hasKorean ? "0.55" : "0.25")}
             />
           );
         })}
@@ -1143,29 +1195,99 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
               cursor: 'text',
             }}
           >
-            {koreanParagraphs.map((para: string, idx: number) => {
-              const isActive = activeKoreanParagraphIndex === idx;
-              return (
-                <div
-                  key={idx}
-                  className="korean-paragraph"
-                  style={{
-                    marginBottom: idx < koreanParagraphs.length - 1 ? 16 : 0,
-                    lineHeight: 1.8,
-                    fontSize: 18,
-                    letterSpacing: '0.05em',
-                    color: '#1a1a1a',
-                    backgroundColor: isActive ? 'rgba(255, 107, 107, 0.1)' : 'transparent',
-                    borderLeft: isActive ? '3px solid #ff6b6b' : '3px solid transparent',
-                    paddingLeft: 8,
-                    marginLeft: -8,
-                    transition: 'all 0.2s ease',
-                  }}
-                >
-                  {para}
-                </div>
-              );
-            })}
+            {/* English-layout aligned Korean panel:
+               - rows == current English paragraph count (split by \\n\\n)
+               - KR text is sourced from paragraphMatches.koreanParagraphs (aligned to EN count)
+               - KR-only content is inserted via unmatchedKorean (highlighted)
+               - EN-only rows are shown as '(no Korean aligned)' */}
+            {englishParagraphsForLayout.length === 0 ? (
+              <div style={{ color: '#6b7280', fontSize: 14 }}>No English paragraphs found.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {englishParagraphsForLayout.map((_, rowIdx) => {
+                  const krAligned = effectiveMatches?.koreanParagraphs || [];
+                  const krText = krAligned[rowIdx] ?? '';
+                  const unmatched = (effectiveMatches?.unmatchedKorean || []).filter(u => u.beforeEnglishIndex === rowIdx);
+
+                  const hasAligned = krText.trim().length > 0;
+                  const isActive = activeKoreanRowIndex === rowIdx;
+                  return (
+                    <div
+                      key={rowIdx}
+                      className="korean-row-anchor"
+                      data-english-idx={rowIdx}
+                      style={{ minHeight: 12 }}
+                    >
+                      {/* Unmatched Korean inserted before this EN row */}
+                      {unmatched.map((u, j) => (
+                        <div
+                          key={`unmatched-${rowIdx}-${j}`}
+                          style={{
+                            marginBottom: 10,
+                            lineHeight: 1.8,
+                            fontSize: 18,
+                            letterSpacing: '0.05em',
+                            color: '#1a1a1a',
+                            background: 'rgba(251, 146, 60, 0.12)',
+                            borderLeft: '3px solid #f97316',
+                            paddingLeft: 8,
+                            marginLeft: -8,
+                            borderRadius: 6,
+                            boxShadow: 'inset 0 0 0 1px rgba(249, 115, 22, 0.25)',
+                          }}
+                          title="UNMATCHED Korean (likely omitted in English)"
+                        >
+                          <div>{u.text}</div>
+                        </div>
+                      ))}
+
+                      {/* Aligned Korean for this EN row */}
+                      <div
+                        style={{
+                          lineHeight: 1.8,
+                          fontSize: 18,
+                          letterSpacing: '0.05em',
+                          color: hasAligned ? '#1a1a1a' : '#9ca3af',
+                          backgroundColor: isActive ? 'rgba(255, 107, 107, 0.10)' : 'transparent',
+                          borderLeft: isActive ? '3px solid #ff6b6b' : '3px solid transparent',
+                          paddingLeft: 8,
+                          marginLeft: -8,
+                          borderRadius: 6,
+                        }}
+                        title={hasAligned ? '' : 'No Korean aligned to this English paragraph (EN-only)'}
+                      >
+                        <div>{hasAligned ? krText : '(no Korean aligned)'}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Unmatched Korean after the last EN row */}
+                {(effectiveMatches?.unmatchedKorean || [])
+                  .filter(u => u.beforeEnglishIndex === englishParagraphsForLayout.length)
+                  .map((u, j) => (
+                    <div
+                      key={`unmatched-tail-${j}`}
+                      style={{
+                        marginTop: 6,
+                        lineHeight: 1.8,
+                        fontSize: 18,
+                        letterSpacing: '0.05em',
+                        color: '#1a1a1a',
+                        background: 'rgba(251, 146, 60, 0.12)',
+                        borderLeft: '3px solid #f97316',
+                        paddingLeft: 8,
+                        marginLeft: -8,
+                        borderRadius: 6,
+                        boxShadow: 'inset 0 0 0 1px rgba(249, 115, 22, 0.25)',
+                      }}
+                      title="UNMATCHED Korean (likely omitted in English)"
+                    >
+                      <div>{u.text}</div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
 
           {/* English text field (editable) */}
@@ -1174,7 +1296,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
           })}
 
           {/* Review cards positioned next to translation field */}
-          {parsedIssues.length > 0 && issuePositions.length > 0 && (() => {
+          {parsedIssues.length > 0 && (() => {
             const trEl = document.getElementById('translationField');
             const bgEl = document.getElementById('background');
             if (!trEl || !bgEl) return null;
@@ -1191,18 +1313,21 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
             const adjustedPositions: number[] = [];
             let lastBottom = 0;
 
-            issuePositions.forEach((pos, idx) => {
-              if (!pos || pos.top === 0) {
-                adjustedPositions.push(0);
-                return;
-              }
-
+            for (let idx = 0; idx < parsedIssues.length; idx++) {
+              const pos = issuePositions[idx];
               // Calculate top position relative to the background container
               // pos.top is relative to the translation field content (including scroll)
               // We want: (trRect.top + pos.top - trEl.scrollTop) - bgRect.top
-              let desiredTop = (trRect.top + pos.top - trEl.scrollTop) - bgRect.top;
+              let desiredTop: number;
 
-              // Ensure minimum gap between cards
+              const anchored = !!pos && pos.top !== 0;
+              if (anchored) {
+                desiredTop = (trRect.top + pos.top - trEl.scrollTop) - bgRect.top;
+              } else {
+                // Fallback: never drop cards. Stack unanchored cards after the last one.
+                desiredTop = lastBottom + cardMinGap;
+              }
+
               if (adjustedPositions.length > 0 && desiredTop < lastBottom + cardMinGap) {
                 desiredTop = lastBottom + cardMinGap;
               }
@@ -1211,21 +1336,21 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
 
               // More accurate card height estimation
               const issue = parsedIssues[idx];
-              const baseHeight = 80; // Base height for category, severity, message
-              const messageLines = Math.ceil((issue.message?.length || 0) / 50); // Approximate lines
+              const baseHeight = 80;
+              const messageLines = Math.ceil((issue.message?.length || 0) / 50);
               const messageHeight = messageLines * 20;
               const suggestionHeight = issue.suggestion ? 70 + Math.ceil((issue.suggestion.length || 0) / 55) * 16 : 0;
               const textHeight = issue.text ? 30 : 0;
               const estimatedHeight = baseHeight + messageHeight + suggestionHeight + textHeight;
 
               lastBottom = desiredTop + estimatedHeight;
-            });
+            }
 
             return (
               <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
                 {parsedIssues.map((iss, idx) => {
-                  const cardTop = adjustedPositions[idx];
-                  if (cardTop === 0) return null;
+                  const cardTop = adjustedPositions[idx] ?? (lastBottom + cardMinGap + idx * 12);
+                  const anchored = !!issuePositions[idx] && issuePositions[idx].top !== 0;
 
                   const color = CATEGORY_COLOR[iss.category] || 'rgba(255,196,0,0.45)';
                   const solidColor = color.replace('0.35', '1');
@@ -1238,7 +1363,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
                         left: cardLeft,
                         top: cardTop,
                         width: cardWidth,
-                        background: 'white',
+                        background: anchored ? 'white' : '#fff7ed',
                         border: '1px solid #e5e7eb',
                         borderLeft: `4px solid ${solidColor}`,
                         borderRadius: 8,

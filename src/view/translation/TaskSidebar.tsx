@@ -10,12 +10,12 @@ import {
   Tooltip,
 } from '@nextui-org/react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
+import { taskRunner } from '../../translation/services/TaskRunner';
 
 export const TaskSidebar: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const tasks = useTranslationStore(state => Object.values(state.tasks));
   const projects = useTranslationStore(state => state.projects);
-  const cancelTask = useTranslationStore(state => state.cancelTask);
 
   // Filter active tasks (not completed, failed, or cancelled)
   const activeTasks = tasks.filter(
@@ -46,6 +46,8 @@ export const TaskSidebar: React.FC = () => {
       case 'glossary': return '📚 Glossary Extraction';
       case 'translation': return '🌐 Translation';
       case 'retranslate': return '🔄 Re-translation';
+      case 'match_paragraphs': return '🧩 Match Paragraphs';
+      case 'review_chunk': return '✅ Review (Chunk)';
       case 'review': return '✅ Review';
       default: return type;
     }
@@ -123,7 +125,7 @@ export const TaskSidebar: React.FC = () => {
                         fullWidth
                         onPress={() => {
                           if (confirm('Are you sure you want to cancel this task?')) {
-                            cancelTask(task.id);
+                            taskRunner.cancelTask(task.id);
                           }
                         }}
                       >
@@ -155,7 +157,15 @@ export const TaskSidebar: React.FC = () => {
                     }`}
                   >
                     <span className="text-lg">
-                      {task.type === 'glossary' ? '📚' : '🌐'}
+                      {task.type === 'glossary'
+                        ? '📚'
+                        : task.type === 'retranslate'
+                          ? '🔄'
+                          : task.type === 'match_paragraphs'
+                            ? '🧩'
+                            : task.type === 'review_chunk' || task.type === 'review'
+                              ? '✅'
+                              : '🌐'}
                     </span>
                   </div>
                   <div className="absolute bottom-0 right-0 w-5 h-5 bg-white dark:bg-gray-900 rounded-full border-2 border-gray-200 dark:border-gray-700 flex items-center justify-center">

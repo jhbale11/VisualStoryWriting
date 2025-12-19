@@ -6,8 +6,16 @@
 import type { TranslationProject } from '../types';
 
 const DB_NAME = 'translation-db';
-const DB_VERSION = 1;
-const STORE_NAME = 'projects';
+const PROJECT_STORE = 'projects';
+const REVIEW_STORE = 'reviews';
+
+interface ReviewRecord {
+  key: string; // `${projectId}:${chunkId}`
+  projectId: string;
+  chunkId: string;
+  issues: Array<Record<string, any>>;
+  updated_at: string;
+}
 
 class BrowserStorage {
   private db: IDBDatabase | null = null;
@@ -15,34 +23,63 @@ class BrowserStorage {
   async init(): Promise<void> {
     if (this.db) return;
 
+    // Important: do NOT pass an explicit version here.
+    // Passing a lower version than what's already on disk triggers VersionError (downgrade),
+    // which blocks all reads/writes. Opening without version always opens the existing DB.
+    const db = await this.openDb();
+    this.db = db;
+
+    // Ensure schema is present (auto-upgrade if needed).
+    await this.ensureSchema();
+  }
+
+  private openDb(version?: number): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = typeof version === 'number'
+        ? indexedDB.open(DB_NAME, version)
+        : indexedDB.open(DB_NAME);
 
       request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
+      request.onsuccess = () => resolve(request.result);
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        // Projects store
+        if (!db.objectStoreNames.contains(PROJECT_STORE)) {
+          const store = db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
           store.createIndex('is_archived', 'is_archived', { unique: false });
           store.createIndex('type', 'type', { unique: false });
           store.createIndex('status', 'status', { unique: false });
           store.createIndex('updated_at', 'updated_at', { unique: false });
         }
+        // Reviews store (per-chunk review issues)
+        if (!db.objectStoreNames.contains(REVIEW_STORE)) {
+          const reviewStore = db.createObjectStore(REVIEW_STORE, { keyPath: 'key' });
+          reviewStore.createIndex('projectId', 'projectId', { unique: false });
+          reviewStore.createIndex('updated_at', 'updated_at', { unique: false });
+        }
       };
     });
   }
 
-  private async getStore(mode: IDBTransactionMode): Promise<IDBObjectStore> {
+  private async ensureSchema(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    const missingProjects = !this.db.objectStoreNames.contains(PROJECT_STORE);
+    const missingReviews = !this.db.objectStoreNames.contains(REVIEW_STORE);
+    if (!missingProjects && !missingReviews) return;
+
+    // Upgrade by bumping the DB version by 1 (safe monotonic upgrade).
+    const nextVersion = this.db.version + 1;
+    this.db.close();
+    this.db = await this.openDb(nextVersion);
+  }
+
+  private async getStore(store: string, mode: IDBTransactionMode): Promise<IDBObjectStore> {
     await this.init();
     if (!this.db) throw new Error('Database not initialized');
-    const transaction = this.db.transaction([STORE_NAME], mode);
-    return transaction.objectStore(STORE_NAME);
+    const transaction = this.db.transaction([store], mode);
+    return transaction.objectStore(store);
   }
 
   // Check if project is completed
@@ -54,7 +91,7 @@ class BrowserStorage {
   // Save project to IndexedDB
   async saveProject(project: TranslationProject): Promise<void> {
     try {
-      const store = await this.getStore('readwrite');
+      const store = await this.getStore(PROJECT_STORE, 'readwrite');
       const isArchived = this.isCompleted(project);
       const projectWithArchive = {
         ...project,
@@ -93,7 +130,7 @@ class BrowserStorage {
   // Get project from IndexedDB
   async getProject(projectId: string): Promise<TranslationProject | null> {
     try {
-      const store = await this.getStore('readonly');
+      const store = await this.getStore(PROJECT_STORE, 'readonly');
       
       return new Promise((resolve, reject) => {
         const request = store.get(projectId);
@@ -118,12 +155,12 @@ class BrowserStorage {
   // List all projects
   async listProjects(options?: {
     includeArchived?: boolean;
-    type?: 'translation' | 'glossary';
+    type?: TranslationProject['type'];
     limit?: number;
     offset?: number;
   }): Promise<TranslationProject[]> {
     try {
-      const store = await this.getStore('readonly');
+      const store = await this.getStore(PROJECT_STORE, 'readonly');
       
       return new Promise((resolve, reject) => {
         const request = store.getAll();
@@ -175,12 +212,12 @@ class BrowserStorage {
 
   // List archived projects
   async listArchivedProjects(options?: {
-    type?: 'translation' | 'glossary';
+    type?: TranslationProject['type'];
     limit?: number;
     offset?: number;
   }): Promise<TranslationProject[]> {
     try {
-      const store = await this.getStore('readonly');
+      const store = await this.getStore(PROJECT_STORE, 'readonly');
       
       return new Promise((resolve, reject) => {
         // Get all projects and filter in memory
@@ -236,7 +273,7 @@ class BrowserStorage {
         return;
       }
       
-      const store = await this.getStore('readwrite');
+      const store = await this.getStore(PROJECT_STORE, 'readwrite');
       
       return new Promise((resolve, reject) => {
         const request = store.delete(projectId);
@@ -364,6 +401,58 @@ class BrowserStorage {
         byType: {},
         byStatus: {},
       };
+    }
+  }
+
+  // ============== Review storage (per chunk) ==============
+  async saveReview(projectId: string, chunkId: string, issues: Array<Record<string, any>>): Promise<void> {
+    try {
+      const store = await this.getStore(REVIEW_STORE, 'readwrite');
+      const record: ReviewRecord = {
+        key: `${projectId}:${chunkId}`,
+        projectId,
+        chunkId,
+        issues,
+        updated_at: new Date().toISOString(),
+      };
+      await new Promise<void>((resolve, reject) => {
+        const req = store.put(record);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (error) {
+      console.error('[BrowserStorage] Failed to save review:', error);
+      throw error;
+    }
+  }
+
+  async getReview(projectId: string, chunkId: string): Promise<Array<Record<string, any>> | null> {
+    try {
+      const store = await this.getStore(REVIEW_STORE, 'readonly');
+      return await new Promise((resolve, reject) => {
+        const req = store.get(`${projectId}:${chunkId}`);
+        req.onsuccess = () => {
+          const record = req.result as ReviewRecord | undefined;
+          resolve(record ? record.issues : null);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch (error) {
+      console.error('[BrowserStorage] Failed to load review:', error);
+      return null;
+    }
+  }
+
+  async deleteReview(projectId: string, chunkId: string): Promise<void> {
+    try {
+      const store = await this.getStore(REVIEW_STORE, 'readwrite');
+      await new Promise<void>((resolve, reject) => {
+        const req = store.delete(`${projectId}:${chunkId}`);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (error) {
+      console.error('[BrowserStorage] Failed to delete review:', error);
     }
   }
 

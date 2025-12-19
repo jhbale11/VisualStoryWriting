@@ -6,6 +6,7 @@ import { QualityAgent } from '../agents/QualityAgent';
 import { ProofreaderAgent } from '../agents/ProofreaderAgent';
 import { LayoutAgent } from '../agents/LayoutAgent';
 import { ParagraphMatchingAgent } from '../agents/ParagraphMatchingAgent';
+import { ReviewAgent } from '../agents/ReviewAgent';
 import type { TranslationState, Glossary, AgentConfigs } from '../types';
 import { LLMClientFactory } from '../llm/clients';
 
@@ -26,6 +27,7 @@ export class TranslationWorkflow {
   private proofreaderAgent?: ProofreaderAgent;
   private layoutAgent?: LayoutAgent;
   private matchingAgent?: ParagraphMatchingAgent;
+  private reviewAgent?: ReviewAgent;
   private config: TranslationWorkflowConfig;
 
   constructor(config: TranslationWorkflowConfig) {
@@ -43,6 +45,7 @@ export class TranslationWorkflow {
     if (agentConfigs.quality) configMap.quality = agentConfigs.quality;
     if (agentConfigs.proofreader) configMap.proofreader = agentConfigs.proofreader;
     if (agentConfigs.layout) configMap.layout = agentConfigs.layout;
+    if (agentConfigs.review) configMap.review = agentConfigs.review;
 
     this.clients = LLMClientFactory.createClients(configMap);
 
@@ -89,6 +92,13 @@ export class TranslationWorkflow {
       );
     }
 
+    if (this.clients.review) {
+      this.reviewAgent = new ReviewAgent(
+        this.clients.review,
+        customPrompts.review
+      );
+    }
+
     // Initialize matching agent (always available)
     try {
       this.matchingAgent = new ParagraphMatchingAgent();
@@ -98,7 +108,7 @@ export class TranslationWorkflow {
     }
   }
 
-  createGraph() {
+  private createGraph() {
     const workflow = createWorkflow<TranslationState>();
 
     // Add nodes
@@ -108,26 +118,21 @@ export class TranslationWorkflow {
     workflow.addNode('proofread', this.proofreadNode.bind(this));
     workflow.addNode('layout', this.layoutNode.bind(this));
     workflow.addNode('matching', this.matchingNode.bind(this));
+    workflow.addNode('review', this.reviewNode.bind(this));
+    workflow.addNode('post_process', this.postProcessNode.bind(this));
 
     // Add edges
     workflow.addEdge(START, 'translate');
     workflow.addEdge('translate', 'enhance');
+    workflow.addEdge('enhance', 'quality_check');
 
-    // Conditional: quality check decides whether to re-enhance
-    workflow.addConditionalEdges(
-      'enhance',
-      this.shouldRunQualityCheck.bind(this),
-      {
-        quality_check: 'quality_check',
-        proofread: 'proofread',
-        layout: 'layout',
-      }
-    );
-
-    // After quality check, decide whether to re-enhance
+    // Quality is the gatekeeper:
+    // - If quality is poor (<70) and retries remain -> enhance again (with feedback)
+    // - If quality is great (>=90) -> skip proofread and go to layout
+    // - Otherwise -> proofread -> layout
     workflow.addConditionalEdges(
       'quality_check',
-      this.afterQualityCheck.bind(this),
+      this.afterQualityCheckV3.bind(this),
       {
         enhance: 'enhance',
         proofread: 'proofread',
@@ -135,21 +140,11 @@ export class TranslationWorkflow {
       }
     );
 
-    // Conditional: run proofreader if enabled
-    workflow.addConditionalEdges(
-      'proofread',
-      this.shouldRunLayout.bind(this),
-      {
-        layout: 'layout',
-        matching: 'matching',
-      }
-    );
+    workflow.addEdge('proofread', 'layout');
 
-    // After layout, always run matching
-    workflow.addEdge('layout', 'matching');
-
-    // Matching is the final step
-    workflow.addEdge('matching', END);
+    // Post-processing: run matching + review concurrently (engine is sequential, so we parallelize inside a node)
+    workflow.addEdge('layout', 'post_process');
+    workflow.addEdge('post_process', END);
 
     return workflow.compile();
   }
@@ -162,7 +157,8 @@ export class TranslationWorkflow {
     try {
       const translated = await this.translationAgent.translate(
         state.sourceText,
-        state.chunkMetadata
+        state.chunkMetadata,
+        state.previousContext
       );
 
       return {
@@ -188,10 +184,13 @@ export class TranslationWorkflow {
     }
 
     try {
-      const enhanced = await this.enhancementAgent.enhance(
-        state.translated || '',
-        state.sourceText
-      );
+      const isRetry = (state.retryCount || 0) > 0;
+      const hasFeedback = !!(state.qualityIssues && state.qualityIssues.length > 0);
+      const inputText = state.enhanced || state.translated || '';
+
+      const enhanced = isRetry && hasFeedback
+        ? await this.enhancementAgent.enhance(inputText, state.sourceText, state.qualityIssues)
+        : await this.enhancementAgent.enhance(state.translated || '', state.sourceText);
 
       return {
         enhanced,
@@ -226,10 +225,11 @@ export class TranslationWorkflow {
 
       const retryCount = (state.retryCount || 0);
       const maxRetries = state.maxRetries || 2;
-      const needsRetry = !result.passes && retryCount < maxRetries && result.major_issues.length > 0;
+      const score = result.overall_score;
+      const needsRetry = score < 70 && retryCount < maxRetries && result.major_issues.length > 0;
 
       return {
-        qualityScore: result.overall_score,
+        qualityScore: score,
         qualityIssues: [...result.major_issues, ...result.minor_issues],
         needsReenhancement: needsRetry,
         retryCount: needsRetry ? retryCount + 1 : retryCount,
@@ -305,35 +305,40 @@ export class TranslationWorkflow {
     }
   }
 
-  // Conditional routing functions
-  private shouldRunQualityCheck(state: TranslationState): string {
-    if (this.qualityAgent && !state.error) {
-      return 'quality_check';
-    } else if (state.enableProofreader && this.proofreaderAgent) {
-      return 'proofread';
-    } else if (this.layoutAgent) {
-      return 'layout';
-    }
-    return 'layout'; // Default to layout as final step
-  }
-
-  private afterQualityCheck(state: TranslationState): string {
-    if (state.needsReenhancement && this.enhancementAgent) {
+  // Conditional routing functions (v2: enhance -> proofread -> quality -> layout)
+  private afterQualityCheckV3(state: TranslationState): string {
+    if (state.needsReenhancement && this.enhancementAgent && !state.error) {
       return 'enhance';
-    } else if (state.enableProofreader && this.proofreaderAgent) {
-      return 'proofread';
-    } else if (this.layoutAgent) {
+    }
+
+    const score = state.qualityScore ?? 0;
+    if (score >= 90 || !state.enableProofreader || !this.proofreaderAgent) {
       return 'layout';
     }
-    return 'layout';
+
+    return 'proofread';
   }
 
-  private shouldRunLayout(state: TranslationState): string {
-    if (this.layoutAgent && !state.error) {
-      return 'layout';
+  private async postProcessNode(state: TranslationState): Promise<Partial<TranslationState>> {
+    // Run matching & review concurrently; both are non-critical.
+    const tasks: Array<Promise<Partial<TranslationState>>> = [
+      this.matchingNode(state),
+      this.reviewNode(state),
+    ];
+
+    const settled = await Promise.allSettled(tasks);
+
+    const updates: Partial<TranslationState> = {
+      currentStage: 'post_process',
+    };
+
+    for (const r of settled) {
+      if (r.status !== 'fulfilled') continue;
+      const { currentStage: _ignoredStage, ...rest } = r.value as any;
+      Object.assign(updates, rest);
     }
-    // Skip layout and go to matching
-    return 'matching';
+
+    return updates;
   }
 
   private async matchingNode(state: TranslationState): Promise<Partial<TranslationState>> {
@@ -378,6 +383,36 @@ export class TranslationWorkflow {
     }
   }
 
+  private async reviewNode(state: TranslationState): Promise<Partial<TranslationState>> {
+    // Only run automated review for English targets
+    if (this.config.targetLanguage !== 'en') {
+      return { currentStage: 'review' };
+    }
+
+    if (!this.reviewAgent) {
+      // Skip review if not configured
+      return { currentStage: 'review' };
+    }
+
+    try {
+      const finalText = state.final || state.proofread || state.enhanced || state.translated || '';
+      const koreanText = state.sourceText;
+      if (!finalText || !koreanText) {
+        return { currentStage: 'review' };
+      }
+
+      const issues = await this.reviewAgent.review(koreanText, finalText);
+      return {
+        reviewIssues: issues,
+        currentStage: 'review',
+        llmCalls: (state.llmCalls || 0) + 1,
+      };
+    } catch (error) {
+      console.error('Review step failed (non-critical):', error);
+      return { currentStage: 'review' };
+    }
+  }
+
   async processChunk(
     sourceText: string,
     chunkMetadata: any,
@@ -387,6 +422,7 @@ export class TranslationWorkflow {
 
     const initialState: TranslationState = {
       sourceText,
+      previousContext,
       glossary: this.config.glossary,
       chunkMetadata,
       customPrompts: this.config.customPrompts,

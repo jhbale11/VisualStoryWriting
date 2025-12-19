@@ -5,11 +5,51 @@ import { TranslationWorkflow } from '../workflow/TranslationWorkflow';
 import { LLMClientFactory } from '../llm/clients';
 import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
 import { DEFAULT_PUBLISH_PROMPT } from '../prompts/defaultPrompts';
+import { browserStorage } from './BrowserStorage';
+import { ParagraphMatchingAgent } from '../agents/ParagraphMatchingAgent';
+import { ReviewAgent } from '../agents/ReviewAgent';
+import type { Chunk, TranslationProject } from '../types';
+import type { GlossaryProjectRecord } from '../../glossary/types';
 
 export class TaskRunner {
   private runningTasks: Set<string> = new Set();
   private abortControllers: Map<string, AbortController> = new Map();
   private initialized = false;
+
+  private generateRunId(): string {
+    return `run_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  private getBestEnglishText(chunk: Chunk): string {
+    return (
+      chunk.draft_final ||
+      chunk.translations?.final ||
+      chunk.translations?.proofread ||
+      chunk.translations?.enhanced ||
+      chunk.translations?.translated ||
+      ''
+    );
+  }
+
+  private computePreviousContext(project: TranslationProject, chunk: Chunk): string | undefined {
+    const idx = chunk.index ?? chunk.metadata?.chunk_index ?? 0;
+    if (idx <= 0) return undefined;
+    const prev =
+      project.chunks.find(c => (c.index ?? c.metadata?.chunk_index) === idx - 1) ||
+      project.chunks[idx - 1];
+    if (!prev) return undefined;
+    const ctx = this.getBestEnglishText(prev);
+    if (!ctx) return undefined;
+    // Keep the tail to avoid huge prompts; enough for tone/term continuity.
+    const maxChars = 1800;
+    return ctx.length > maxChars ? ctx.slice(-maxChars) : ctx;
+  }
+
+  private isStale(taskId: string, runId: string, signal: AbortSignal): boolean {
+    if (signal.aborted) return true;
+    const task = useTranslationStore.getState().getTask(taskId);
+    return task?.metadata?.runId !== runId || task.status !== 'running';
+  }
 
   /**
    * Initialize the task runner and recover any interrupted tasks
@@ -60,18 +100,38 @@ export class TaskRunner {
     }
 
     try {
-      store.updateTask(taskId, { status: 'running', progress: 0, message: 'Starting...' });
+      const runId = this.generateRunId();
+      store.updateTask(taskId, {
+        status: 'running',
+        progress: 0,
+        message: 'Starting...',
+        metadata: { ...(task.metadata || {}), runId, startedAt: new Date().toISOString() },
+      });
 
       switch (task.type) {
         case 'glossary':
           await this.runGlossaryTask(taskId, task.projectId, abortController.signal);
           break;
         case 'translation':
-          await this.runTranslationTask(taskId, task.projectId, abortController.signal);
+          await this.runTranslationTask(taskId, task.projectId, abortController.signal, runId);
           break;
         case 'retranslate':
           if (task.chunkId) {
-            await this.runRetranslateTask(taskId, task.projectId, task.chunkId, abortController.signal);
+            await this.runRetranslateTask(taskId, task.projectId, task.chunkId, abortController.signal, runId);
+          }
+          break;
+        case 'match_paragraphs':
+          if (task.chunkId) {
+            await this.runMatchParagraphsTask(taskId, task.projectId, task.chunkId, abortController.signal, runId);
+          } else {
+            throw new Error('Chunk ID required for match paragraphs task');
+          }
+          break;
+        case 'review_chunk':
+          if (task.chunkId) {
+            await this.runReviewChunkTask(taskId, task.projectId, task.chunkId, abortController.signal, runId);
+          } else {
+            throw new Error('Chunk ID required for review chunk task');
           }
           break;
         case 'glossary_extraction':
@@ -118,13 +178,15 @@ export class TaskRunner {
   }
 
   cancelTask(taskId: string): void {
+    const store = useTranslationStore.getState();
+    const task = store.getTask(taskId);
     const controller = this.abortControllers.get(taskId);
     if (controller) {
       controller.abort();
       this.abortControllers.delete(taskId);
     }
     this.runningTasks.delete(taskId);
-    useTranslationStore.getState().updateTask(taskId, { status: 'cancelled' });
+    store.updateTask(taskId, { status: 'cancelled' });
   }
 
   private async runGlossaryTask(
@@ -174,7 +236,8 @@ export class TaskRunner {
   private async runTranslationTask(
     taskId: string,
     projectId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    runId: string
   ): Promise<void> {
     const store = useTranslationStore.getState();
     const project = await store.getProject(projectId);
@@ -204,13 +267,17 @@ export class TaskRunner {
       customPrompts: project.prompts,
     });
 
-    const chunks = project.chunks;
-    const totalChunks = chunks.length;
+    const totalChunks = project.chunks.length;
 
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = 0; i < totalChunks; i++) {
       if (signal.aborted) throw new Error('Task aborted');
+      if (this.isStale(taskId, runId, signal)) return;
 
-      const chunk = chunks[i];
+      // Always use the latest project snapshot so edits/saves from other chunks are preserved.
+      const liveProject = await store.getProject(projectId);
+      if (!liveProject) throw new Error('Project not found');
+
+      const chunk = liveProject.chunks[i];
 
       if (chunk.status === 'completed') {
         // Skip already completed chunks
@@ -227,10 +294,14 @@ export class TaskRunner {
       store.updateChunk(projectId, chunk.id, { status: 'processing' });
 
       try {
+        const previousContext = this.computePreviousContext(liveProject, chunk);
         const result = await workflow.processChunk(
           chunk.text,
-          chunk.metadata
+          chunk.metadata,
+          previousContext
         );
+
+        if (this.isStale(taskId, runId, signal)) return;
 
         // Update chunk with results
         store.updateChunk(projectId, chunk.id, {
@@ -243,11 +314,18 @@ export class TaskRunner {
             final: result.final,
             qualityScore: result.qualityScore,
             paragraphMatches: result.paragraphMatches,
+            reviewIssues: result.reviewIssues,
           },
         });
 
+        // Flush to IndexedDB promptly so completed chunks never rely on localStorage
+        const latest = await store.getProject(projectId);
+        if (latest) {
+          await browserStorage.saveProject(latest);
+        }
+
         // Update overall progress
-        const completedChunks = chunks.filter(c => c.status === 'completed').length + 1;
+        const completedChunks = (latest?.chunks || liveProject.chunks).filter(c => c.status === 'completed').length;
         store.updateProject(projectId, {
           translation_progress: completedChunks / totalChunks,
         });
@@ -270,7 +348,8 @@ export class TaskRunner {
     taskId: string,
     projectId: string,
     chunkId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    runId: string
   ): Promise<void> {
     const store = useTranslationStore.getState();
     const project = await store.getProject(projectId);
@@ -300,22 +379,29 @@ export class TaskRunner {
 
     if (signal.aborted) throw new Error('Task aborted');
 
+    const task = store.getTask(taskId);
+    const existingSnapshot = task?.metadata?.previousContextSnapshot as string | undefined;
+    const previousContextSnapshot = existingSnapshot ?? this.computePreviousContext(project, chunk);
+    store.updateTask(taskId, {
+      metadata: { ...(task?.metadata || {}), previousContextSnapshot },
+    });
+
     const result = await workflow.processChunk(
       chunk.text,
-      chunk.metadata
+      chunk.metadata,
+      previousContextSnapshot
     );
 
     store.updateTask(taskId, { progress: 0.9, message: 'Saving...' });
 
-    // Reconstruct Korean text if paragraph matching was successful
-    let updatedText = chunk.text;
-    if (result.paragraphMatches && result.paragraphMatches.koreanParagraphs) {
-      updatedText = result.paragraphMatches.koreanParagraphs.join('\n\n');
-    }
+    if (this.isStale(taskId, runId, signal)) return;
 
     store.updateChunk(projectId, chunkId, {
       status: 'completed',
-      text: updatedText,
+      // CRITICAL: Never mutate Korean source text during review/retranslate.
+      // Paragraph matching produces a Korean segmentation aligned to English layout,
+      // which should live ONLY inside `translations.paragraphMatches`, not overwrite `chunk.text`.
+      text: chunk.text,
       translations: {
         tagged: result.tagged,
         translated: result.translated,
@@ -324,8 +410,103 @@ export class TaskRunner {
         final: result.final,
         qualityScore: result.qualityScore,
         paragraphMatches: result.paragraphMatches,
+        reviewIssues: result.reviewIssues,
       },
     });
+
+    // Flush to IndexedDB promptly
+    const latest = await store.getProject(projectId);
+    if (latest) {
+      await browserStorage.saveProject(latest);
+    }
+  }
+
+  private async runMatchParagraphsTask(
+    taskId: string,
+    projectId: string,
+    chunkId: string,
+    signal: AbortSignal,
+    runId: string
+  ): Promise<void> {
+    const store = useTranslationStore.getState();
+    const project = await store.getProject(projectId);
+    if (!project) throw new Error('Project not found');
+    const chunk = project.chunks.find(c => c.id === chunkId);
+    if (!chunk) throw new Error('Chunk not found');
+
+    store.updateTask(taskId, { progress: 0.1, message: 'Preparing paragraph matching...' });
+    if (signal.aborted) throw new Error('Task aborted');
+
+    const englishText = this.getBestEnglishText(chunk);
+    if (!englishText) throw new Error('No English text found for this chunk');
+
+    store.updateTask(taskId, { progress: 0.3, message: 'Matching paragraphs...' });
+    const matchingAgent = new ParagraphMatchingAgent();
+    const matchResult = await matchingAgent.matchParagraphs(chunk.text, englishText);
+
+    store.updateTask(taskId, { progress: 0.9, message: 'Saving...' });
+    if (this.isStale(taskId, runId, signal)) return;
+
+    store.updateChunk(projectId, chunkId, {
+      translations: {
+        ...chunk.translations,
+        paragraphMatches: matchResult,
+      },
+    });
+
+    const latest = await store.getProject(projectId);
+    if (latest) {
+      await browserStorage.saveProject(latest);
+    }
+  }
+
+  private async runReviewChunkTask(
+    taskId: string,
+    projectId: string,
+    chunkId: string,
+    signal: AbortSignal,
+    runId: string
+  ): Promise<void> {
+    const store = useTranslationStore.getState();
+    const project = await store.getProject(projectId);
+    if (!project) throw new Error('Project not found');
+    const chunk = project.chunks.find(c => c.id === chunkId);
+    if (!chunk) throw new Error('Chunk not found');
+
+    if (project.language !== 'en') {
+      store.updateTask(taskId, { progress: 1, message: 'Review is only available for English targets. Skipped.' });
+      return;
+    }
+
+    const reviewConfig = project.agent_configs.review;
+    if (!reviewConfig) throw new Error('Review agent not configured');
+
+    store.updateTask(taskId, { progress: 0.1, message: 'Initializing reviewer...' });
+    if (signal.aborted) throw new Error('Task aborted');
+
+    const client = LLMClientFactory.createClient(reviewConfig);
+    const agent = new ReviewAgent(client, project.prompts?.review);
+
+    const englishText = this.getBestEnglishText(chunk);
+    if (!englishText) throw new Error('No English text found for this chunk');
+
+    store.updateTask(taskId, { progress: 0.4, message: 'Reviewing translation...' });
+    const issues = await agent.review(chunk.text, englishText);
+
+    store.updateTask(taskId, { progress: 0.9, message: 'Saving...' });
+    if (this.isStale(taskId, runId, signal)) return;
+
+    store.updateChunk(projectId, chunkId, {
+      translations: {
+        ...chunk.translations,
+        reviewIssues: issues,
+      },
+    });
+
+    const latest = await store.getProject(projectId);
+    if (latest) {
+      await browserStorage.saveProject(latest);
+    }
   }
 
   private async runGlossaryExtractionTask(
@@ -366,19 +547,69 @@ export class TaskRunner {
 
     const totalChunks = chunks.length;
 
+    // Resume support: if the project already has partial results, continue from the next chunk.
+    let resumeFrom = 0;
+    let existingProjectRecord: any = undefined;
+    try {
+      existingProjectRecord = await glossaryProjectStorage.getProject(vswProjectId);
+      const processedFromRecord = Number(existingProjectRecord?.processedChunks || 0);
+      const processedFromRaw = Number(existingProjectRecord?.glossary?.raw_chunks?.length || 0);
+      resumeFrom = Math.max(0, Math.min(totalChunks, Math.max(processedFromRecord, processedFromRaw)));
+    } catch (e) {
+      console.warn('[TaskRunner] Failed to read existing glossary project for resume:', e);
+    }
+
     store.updateTask(taskId, {
       progress: 0.05,
-      message: `Processing ${totalChunks} chunks...`
+      message: resumeFrom > 0
+        ? `Resuming: ${resumeFrom}/${totalChunks} chunks already processed...`
+        : `Processing ${totalChunks} chunks...`
     });
 
-    // Reset and initialize glossary store
-    useGlossaryStore.getState().reset();
+    // Initialize glossary store (resume: restore snapshot so UI can show existing raw chunks)
+    if (resumeFrom > 0 && existingProjectRecord?.glossary) {
+      try {
+        // NOTE: restoreGlossarySnapshot is in GlossaryModel; we imported serializeGlossaryState there.
+        // Here we rely on the glossary store already used by processChunk/consolidateResults.
+        // We set fields directly to avoid importing more helpers into TaskRunner.
+        useGlossaryStore.getState().reset();
+        useGlossaryStore.setState({
+          ...(existingProjectRecord.glossary || {}),
+          isLoading: false,
+        } as any);
+      } catch (e) {
+        console.warn('[TaskRunner] Failed to restore glossary snapshot for resume; falling back to fresh init:', e);
+        useGlossaryStore.getState().reset();
+      }
+    } else {
+      useGlossaryStore.getState().reset();
+    }
+
     useGlossaryStore.getState().setTargetLanguage(targetLanguage);
     useGlossaryStore.getState().setFullText(text);
     useGlossaryStore.getState().setTotalChunks(totalChunks);
+    useGlossaryStore.setState({ processedChunks: resumeFrom } as any);
+
+    // Update project record with totals (so the builder can show chunk-level progress immediately)
+    try {
+      const existing = await glossaryProjectStorage.getProject(vswProjectId);
+      const base: GlossaryProjectRecord = existing || {
+        id: vswProjectId,
+        name: `Glossary Project ${new Date().toLocaleString()}`,
+        updatedAt: Date.now(),
+      };
+      await glossaryProjectStorage.saveProject({
+        ...base,
+        status: 'processing',
+        totalChunks,
+        processedChunks: resumeFrom,
+      });
+    } catch (e) {
+      console.warn('[TaskRunner] Failed to update glossary project totals:', e);
+    }
 
     // Process each chunk
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = resumeFrom; i < chunks.length; i++) {
       if (signal.aborted) throw new Error('Task aborted');
 
       const chunk = chunks[i];
@@ -394,6 +625,26 @@ export class TaskRunner {
       } catch (error) {
         console.error(`Error processing chunk ${i}:`, error);
         // Continue with other chunks even if one fails
+      }
+
+      // Persist incremental snapshot so the builder can open mid-run and inspect raw_chunks.
+      try {
+        const glossarySnapshot = serializeGlossaryState(useGlossaryStore.getState());
+        const existing = await glossaryProjectStorage.getProject(vswProjectId);
+        const base: GlossaryProjectRecord = existing || {
+          id: vswProjectId,
+          name: `Glossary Project ${new Date().toLocaleString()}`,
+          updatedAt: Date.now(),
+        };
+        await glossaryProjectStorage.saveProject({
+          ...base,
+          status: 'processing',
+          totalChunks,
+          processedChunks: i + 1,
+          glossary: glossarySnapshot,
+        });
+      } catch (e) {
+        console.warn('[TaskRunner] Failed to persist incremental glossary snapshot:', e);
       }
     }
 
@@ -428,6 +679,8 @@ export class TaskRunner {
       glossary: glossarySnapshot,
       view: existingProject?.view,
       status: 'ready',
+      totalChunks,
+      processedChunks: totalChunks,
     });
 
     localStorage.setItem('vsw.currentProjectId', vswProjectId);

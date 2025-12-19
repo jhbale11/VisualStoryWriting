@@ -98,6 +98,7 @@ You are a Lead Literary Editor for a top-tier North American publishing house. Y
 1.  **Flow Analysis:** Identify stiff, fragmented sentences and improve rhythm using conjunctions.
 2.  **Voice Check:** Ensure dialogue sounds like native speech appropriate for the character.
 3.  **Detail Check:** Verify that no plot points or chapter numbers have been altered.
+4.  **Feedback Loop (If Provided):** If a "Quality feedback to address" section is included, treat it as a prioritized TODO list. Fix those items explicitly in the revised output.
 
 # Execution Rules
 
@@ -130,6 +131,7 @@ You are a Lead Literary Editor for a top-tier North American publishing house. Y
 *   **PRESERVE ALL CONTENT:** Do not omit plot details, actions, or dialogue.
 *   **PRESERVE STRUCTURE:** Keep Chapter numbers (01, 02) and scene sequence exactly as is.
 *   **GLOSSARY ADHERENCE:** Strictly follow the provided glossary for names and terms.
+*   **Feedback Compliance (When Present):** Do not ignore quality feedback. Resolve major issues first, then polish style.
 
 **Output:** Return ONLY the enhanced English text.`;
 
@@ -141,6 +143,7 @@ export const DEFAULT_ENHANCEMENT_PROMPT_JA = `# Role & Objective
 1.  **リズムの確認:** 心の中で音読し、文章のリズムを確認します。読点（、）の位置は適切か？息継ぎは自然か？
 2.  **語彙の監査:** 表現が硬すぎないか？ 説明的な文章を、五感に訴える描写（Show, Don't Tell）に変えられないか検討します。
 3.  **自然さのチェック:** 会話文が、生きた人間（あるいはアニメ・マンガのキャラクター）が実際に話す言葉として自然か確認します。
+4.  **フィードバック優先（提示されている場合）:** "Quality feedback to address" が提示されている場合、それを最優先の修正TODOとして扱い、指摘事項を確実に解消してください。
 
 # Execution Rules (実行ルール)
 
@@ -159,6 +162,7 @@ export const DEFAULT_ENHANCEMENT_PROMPT_JA = `# Role & Objective
 ## III. Structural Rules
 *   **プロット厳守:** ストーリーの展開、キャラクターの行動、セリフの意味合いは**絶対に変更・削除しないでください**。
 *   **記号の変換:** \`""\` は \`「」\` に、心の中の声は \`『』\` に統一してください。
+*   **フィードバック遵守（提示されている場合）:** 指摘された重大問題（major issues）を最優先で修正し、その後に読み味を整えてください。
 
 **Output:** 潤色された日本語テキストのみを出力してください。`;
 
@@ -327,6 +331,17 @@ Quality check should focus on:
 6. Format and layout accuracy
 7. Language naturalness and readability
 
+SCORING RUBRIC (IMPORTANT):
+- 90-100: Publication-ready. Minor polish only. Safe to skip proofreading.
+- 70-89: Generally good but still has noticeable issues. Proofreading recommended.
+- 0-69: Not acceptable. Requires revision (feedback loop). Must include actionable major issues.
+
+ISSUE WRITING RULES (IMPORTANT):
+- major_issues MUST be actionable and specific (e.g., "Inconsistent term X/Y — choose one and apply throughout", "Tone mismatch in dialogue — make it more casual", "Omitted sentence — restore missing line").
+- If overall_score < 70, provide at least 2 major_issues.
+- If overall_score >= 90, major_issues should usually be empty (unless there is a true critical error).
+- Prefer issues that an editor can directly fix in one pass. Avoid vague statements like "sounds off."
+
 Example response:
 {
   "overall_score": 85,
@@ -351,6 +366,16 @@ export const DEFAULT_QUALITY_PROMPT_JA = `# Role & Objective
   "minor_issues": ["(文字列の配列): 軽微な問題点（表記ゆれ、句読点のミスなど）"],
   "specific_improvements": ["修正前 -> 修正後 (の具体的な改善提案)"]
 }
+
+# スコア基準（重要）
+- 90-100: そのまま公開可能（微調整のみ）。校正（Proofread）は省略しても良い水準。
+- 70-89: 概ね良いが粗が残る。校正（Proofread）推奨。
+- 0-69: 不合格。修正ループが必要。必ず具体的な重大問題を提示すること。
+
+# 指摘の書き方（重要）
+- major_issues は「編集者がそのまま直せる」具体的・行動可能な指摘にする（例：用語A/Bの表記ゆれ→どちらかに統一、口調が崩れている→敬語レベルを統一、欠落文→省略せず復元）。
+- overall_score < 70 の場合、major_issues を最低2件以上出すこと。
+- overall_score >= 90 の場合、基本的に major_issues は空配列にする（本当に致命的なミスがある場合のみ例外）。
 
 # Quality Criteria Checklist (評価基準)
 1.  **流暢さとフロー:** 日本語として自然に読めるか？ 「翻訳調」が残っていないか？
@@ -434,3 +459,45 @@ You must distinguish between "Current Thoughts" and "Past Memories".
 *   Are Inner Thoughts in \`'Single Quotes'\`?
 
 **Output:** Return ONLY the processed text ready for publishing.`;
+
+export const DEFAULT_REVIEW_PROMPT_EN = `You are a professional Korean→English Web Novel translation reviewer.
+
+TASK: Critically review the English translation against the Korean source based on the dimensions below.
+Identify specific translation issues and return EXACTLY 10-20 issues as JSON.
+
+Return ONLY valid JSON:
+{
+  "issues": [
+    { 
+      "text": string, 
+      "category": "Linguistic" | "Cultural", 
+      "subcategory": "Idiom" | "Ambiguity" | "Tense" | "ZeroPronoun" | "Terminology" | "Safety", 
+      "severity": "high" | "medium" | "low", 
+      "message": string, 
+      "suggestion": string 
+    }
+  ]
+}
+
+EVALUATION DIMENSIONS (Use these for 'subcategory'):
+1. "Idiom": (Linguistic) Are Chengyu/Idioms translated naturally (liberal) or too literally (rigid)?
+2. "Ambiguity": (Linguistic) Are polysemous words or slang interpreted correctly in context?
+3. "Tense": (Linguistic) Is the narrative tense consistent (handling Korean's loose tense markers)?
+4. "ZeroPronoun": (Linguistic) Are omitted subjects (pro-drop) in Korean correctly restored in English?
+5. "Terminology": (Cultural) Are genre-specific terms (Cultivation, Wuxia, Fantasy) localized consistently?
+6. "Safety": (Cultural) Are cultural taboos/offensive nuances handled safely for the target audience?
+
+RULES:
+1) 10-20 issues, no more, no less.
+2) "text" MUST be an exact substring from the ENGLISH translation.
+3) In "message", provide the RATIONALE: Explain *why* it fails linguistically or culturally.
+4) Do NOT omit sections: review the ENTIRE text.
+5) Prioritize "Cultural Fidelity" and "Narrative Consistency" over simple grammar.
+
+KOREAN SOURCE:
+{{KOREAN}}
+
+ENGLISH TRANSLATION:
+{{ENGLISH}}
+`;
+

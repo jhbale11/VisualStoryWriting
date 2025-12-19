@@ -23,7 +23,11 @@ export class EnhancementAgent {
     this.prompt = prompt;
   }
 
-  async enhance(translatedText: string, originalText?: string): Promise<string> {
+  async enhance(
+    translatedText: string,
+    originalText?: string,
+    feedback?: string[] | string
+  ): Promise<string> {
     const glossaryStr = this.glossary ? this.formatGlossary(this.glossary) : '';
     const systemPrompt = this.prompt + (glossaryStr ? `\n\nGlossary:\n${glossaryStr}` : '');
     
@@ -31,6 +35,11 @@ export class EnhancementAgent {
     
     if (originalText) {
       userPrompt += `\n\nOriginal Korean text for reference:\n${originalText}`;
+    }
+
+    if (feedback && (Array.isArray(feedback) ? feedback.length > 0 : String(feedback).trim().length > 0)) {
+      const feedbackStr = Array.isArray(feedback) ? feedback.map((f) => `- ${f}`).join('\n') : String(feedback);
+      userPrompt += `\n\nQuality feedback to address (fix these issues explicitly):\n${feedbackStr}`;
     }
 
     const messages = [

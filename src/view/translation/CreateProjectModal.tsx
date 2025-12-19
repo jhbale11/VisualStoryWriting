@@ -31,7 +31,8 @@ import {
   DEFAULT_LAYOUT_PROMPT_JA,
   DEFAULT_QUALITY_PROMPT,
   DEFAULT_QUALITY_PROMPT_JA,
-  DEFAULT_PUBLISH_PROMPT
+  DEFAULT_PUBLISH_PROMPT,
+  DEFAULT_REVIEW_PROMPT_EN
 } from '../../translation/prompts/defaultPrompts';
 
 interface CreateProjectModalProps {
@@ -53,6 +54,7 @@ const DEFAULT_PROMPTS = {
   proofreader: DEFAULT_PROOFREADER_PROMPT,
   layout: DEFAULT_LAYOUT_PROMPT,
   quality: DEFAULT_QUALITY_PROMPT,
+  review: DEFAULT_REVIEW_PROMPT_EN,
   publish: DEFAULT_PUBLISH_PROMPT,
 };
 
@@ -62,6 +64,8 @@ const DEFAULT_PROMPTS_JA = {
   proofreader: DEFAULT_PROOFREADER_PROMPT_JA,
   layout: DEFAULT_LAYOUT_PROMPT_JA,
   quality: DEFAULT_QUALITY_PROMPT_JA,
+  // Review agent is currently only used for English targets
+  review: '',
 };
 
 const PROVIDER_MODELS = {
@@ -626,10 +630,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     enhancement?: string;
     proofreader?: string;
     layout?: string;
+    review?: string;
     publish?: string;
   }>({});
   const [editingPrompt, setEditingPrompt] = useState<{
-    agent: 'translation' | 'enhancement' | 'proofreader' | 'layout' | 'publish';
+    agent: 'translation' | 'enhancement' | 'proofreader' | 'layout' | 'review' | 'publish';
     prompt: string;
   } | null>(null);
 
@@ -640,6 +645,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     quality: { ...defaultAgentConfig },
     proofreader: { ...defaultAgentConfig },
     layout: { ...defaultAgentConfig },
+    review: { ...defaultAgentConfig },
     publish: { ...defaultAgentConfig },
   });
 
@@ -691,6 +697,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       : `p-${Date.now()}`);
 
     const projectName = name.trim() || `Glossary Project ${new Date().toLocaleString()}`;
+    const estimatedTotalChunks = Math.ceil(fileContent.trim().length / 8000);
 
     // Create placeholder project
     const placeholderProject: GlossaryProjectRecord = {
@@ -698,6 +705,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       name: projectName,
       updatedAt: Date.now(),
       status: 'processing',
+      totalChunks: estimatedTotalChunks,
+      processedChunks: 0,
     };
     await glossaryProjectStorage.saveProject(placeholderProject);
 
@@ -952,9 +961,11 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       Configure the LLM models for each translation stage
                     </p>
 
-                    {(['translation', 'enhancement', 'quality', 'proofreader', 'layout'] as const).map(agent => {
+                    {(['translation', 'enhancement', 'quality', 'proofreader', 'layout', 'review'] as const).map(agent => {
                       // Check if this agent has custom prompt capability (not quality)
                       const hasPromptEdit = agent !== 'quality';
+                      const isReview = agent === 'review';
+                      const isReviewDisabled = isReview && language !== 'en';
 
                       return (
                         <div key={agent} className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded">
@@ -965,8 +976,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                                 size="sm"
                                 variant="flat"
                                 color="secondary"
+                                isDisabled={isReviewDisabled}
                                 onPress={() => {
-                                  const promptKey = agent as 'translation' | 'enhancement' | 'proofreader' | 'layout';
+                                  const promptKey = agent as 'translation' | 'enhancement' | 'proofreader' | 'layout' | 'review';
                                   setEditingPrompt({
                                     agent: promptKey,
                                     prompt: customPrompts[promptKey] || getDefaultPrompt(promptKey, language)
@@ -977,11 +989,17 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                               </Button>
                             )}
                           </div>
+                          {isReviewDisabled && (
+                            <p className="text-xs text-gray-600 mb-2">
+                              Review agent currently runs only when target language is English.
+                            </p>
+                          )}
                           <div className="grid grid-cols-3 gap-2">
                             <Select
                               label="Provider"
                               size="sm"
                               selectedKeys={[agentConfigs[agent]?.provider || 'gemini']}
+                              isDisabled={isReviewDisabled}
                               onChange={(e) => {
                                 const newProvider = e.target.value as 'gemini' | 'openai' | 'anthropic';
                                 if (newProvider) {
@@ -1004,6 +1022,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                               label="Model"
                               size="sm"
                               selectedKeys={[agentConfigs[agent]?.model || '']}
+                              isDisabled={isReviewDisabled}
                               onChange={(e) => {
                                 const newModel = e.target.value;
                                 updateAgentConfig(agent, 'model', newModel);
@@ -1026,6 +1045,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                               type="number"
                               step="0.1"
                               value={agentConfigs[agent]?.temperature?.toString() || '0.3'}
+                              isDisabled={isReviewDisabled}
                               onValueChange={(v) => updateAgentConfig(agent, 'temperature', parseFloat(v))}
                             />
                           </div>
