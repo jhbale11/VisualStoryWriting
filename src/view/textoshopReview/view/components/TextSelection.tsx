@@ -71,7 +71,7 @@ enum SelectionOrigin {
     MOUSE
 }
 
-export default function TextSelection(props: {children: JSX.Element, onTextSelected?: (selectionRange: Range) => void, className : string, style : React.CSSProperties, opaque: boolean, disabled?: boolean}) {
+export default function TextSelection(props: {children: JSX.Element, onTextSelected?: (selectionRange: Range) => void, className : string, style : React.CSSProperties, opaque: boolean, disabled?: boolean, visualOnly?: boolean}) {
 
     const [rectangles, setRectangles] = useState<{x: number, y: number, width: number, height: number, text: string}[]>([]);
     const parentDivRef = React.createRef<HTMLDivElement>();
@@ -118,7 +118,8 @@ export default function TextSelection(props: {children: JSX.Element, onTextSelec
         const selection = window.getSelection();
 
         if (!props.disabled && selection && selection.rangeCount > 0) {
-            const range = RangeUtils.getRangeSnappedToWord(selection.getRangeAt(0));
+            const baseRange = selection.getRangeAt(0);
+            const range = props.visualOnly ? baseRange : RangeUtils.getRangeSnappedToWord(baseRange);
             updateSelectionRectangles(range);
         }
     }
@@ -127,13 +128,19 @@ export default function TextSelection(props: {children: JSX.Element, onTextSelec
         const selection = window.getSelection();
         
         if (!props.disabled && selection && selection.rangeCount > 0) {
-            const range = RangeUtils.getRangeSnappedToWord(selection.getRangeAt(0));
-            selection.removeAllRanges();
-            selection.addRange(range);
-
-            setRectangles([]);
-            if (props.onTextSelected) {
-                props.onTextSelected(range);
+            const baseRange = selection.getRangeAt(0);
+            const range = props.visualOnly ? baseRange : RangeUtils.getRangeSnappedToWord(baseRange);
+            if (props.visualOnly) {
+                // Only update rectangles; preserve native selection and extensions
+                updateSelectionRectangles(range);
+            } else {
+                selection.removeAllRanges();
+                selection.addRange(range);
+    
+                setRectangles([]);
+                if (props.onTextSelected) {
+                    props.onTextSelected(range);
+                }
             }
         }
 

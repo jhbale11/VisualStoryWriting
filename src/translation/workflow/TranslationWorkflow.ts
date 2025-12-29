@@ -35,8 +35,29 @@ export class TranslationWorkflow {
     this.initializeAgents();
   }
 
+  /** Lightweight retry helper for non-critical steps (matching / review) */
+  private async withRetry<T>(
+    fn: () => Promise<T>,
+    attempts: number = 2,
+    delayMs: number = 250
+  ): Promise<T> {
+    let lastError: any;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err;
+        if (i + 1 < attempts && delayMs > 0) {
+          await new Promise(res => setTimeout(res, delayMs));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   private initializeAgents() {
-    const { agentConfigs, glossary, targetLanguage = 'ja', customPrompts = {} } = this.config;
+    // Default targetLanguage를 영어로 설정해 리뷰 단계가 기본적으로 활성화되도록 수정
+    const { agentConfigs, glossary, targetLanguage = 'en', customPrompts = {} } = this.config;
 
     // Create LLM clients
     const configMap: Record<string, any> = {};
@@ -350,7 +371,8 @@ export class TranslationWorkflow {
       };
     }
 
-    try {
+    const matchingAgent = this.matchingAgent!;
+    const runMatch = async () => {
       const finalText = state.final || state.proofread || state.enhanced || state.translated || '';
       const koreanText = state.sourceText;
 
@@ -362,7 +384,7 @@ export class TranslationWorkflow {
       }
 
       console.log('Starting paragraph matching...');
-      const matchResult = await this.matchingAgent.matchParagraphs(
+      const matchResult = await matchingAgent.matchParagraphs(
         koreanText,
         finalText
       );
@@ -372,13 +394,14 @@ export class TranslationWorkflow {
         paragraphMatches: matchResult,
         currentStage: 'matching',
       };
+    };
+
+    try {
+      return await this.withRetry(runMatch, 2, 300);
     } catch (error) {
-      console.error('Paragraph matching failed (non-critical):', error);
-      // Don't fail the entire workflow if matching fails - just skip it
-      // Don't set state.error as it would cause the whole workflow to fail
+      console.error('Paragraph matching failed after retry (non-critical):', error);
       return {
         currentStage: 'matching',
-        // paragraphMatches will be undefined, which is acceptable
       };
     }
   }
@@ -394,21 +417,26 @@ export class TranslationWorkflow {
       return { currentStage: 'review' };
     }
 
-    try {
+    const runReview = async () => {
+      const reviewAgent = this.reviewAgent!;
       const finalText = state.final || state.proofread || state.enhanced || state.translated || '';
       const koreanText = state.sourceText;
       if (!finalText || !koreanText) {
         return { currentStage: 'review' };
       }
 
-      const issues = await this.reviewAgent.review(koreanText, finalText);
+      const issues = await reviewAgent.review(koreanText, finalText);
       return {
         reviewIssues: issues,
         currentStage: 'review',
         llmCalls: (state.llmCalls || 0) + 1,
       };
+    };
+
+    try {
+      return await this.withRetry(runReview, 2, 300);
     } catch (error) {
-      console.error('Review step failed (non-critical):', error);
+      console.error('Review step failed after retry (non-critical):', error);
       return { currentStage: 'review' };
     }
   }

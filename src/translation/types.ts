@@ -192,6 +192,7 @@ export interface TranslationProject {
 export type TaskType =
   | 'glossary'
   | 'glossary_extraction'
+  | 'glossary_reconsolidation'
   | 'translation'
   | 'retranslate'
   | 'review'

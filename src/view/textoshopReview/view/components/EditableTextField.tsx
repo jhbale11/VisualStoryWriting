@@ -173,6 +173,9 @@ export default function EditableTextField(props: { style?: React.CSSProperties, 
     const renderLeaf = useCallback((props: RenderLeafProps) => {
         return <Leaf {...props} editor={editor} />
     }, [])
+    const selectionOverlayMode = selectedTool?.selectionOverlayMode ? selectedTool.selectionOverlayMode() : (selectedTool?.enableSelectionOverlay ? (selectedTool.enableSelectionOverlay() ? "full" : "disabled") : "full");
+    const selectionOverlayEnabled = selectionOverlayMode !== "disabled";
+    const selectionOverlayVisualOnly = selectionOverlayMode === "visual-only";
 
 
     const mouseDownListener = (e: React.MouseEvent) => {
@@ -301,7 +304,14 @@ export default function EditableTextField(props: { style?: React.CSSProperties, 
                     }}
                 />
             </div>}
-            <TextSelection disabled={isDragging} opaque={selectedTool.isSelectionOpaque()} className={selectedTool.getMarksClassname()} style={style} onTextSelected={onTextSelected}>
+            <TextSelection
+                disabled={isDragging || !selectionOverlayEnabled}
+                visualOnly={selectionOverlayVisualOnly}
+                opaque={selectionOverlayEnabled && !selectionOverlayVisualOnly && selectedTool.isSelectionOpaque()}
+                className={selectionOverlayEnabled ? selectedTool.getMarksClassname() : ""}
+                style={style}
+                onTextSelected={selectionOverlayEnabled && !selectionOverlayVisualOnly ? onTextSelected : undefined}
+            >
                 <div style={{ userSelect: isDragging ? 'none' : undefined }} className={"textEditor " + (isLoading ? "loading" : "")}>
                     <Slate data-gramm={false} data-gramm_editor={false} data-enable-grammarly={false} editor={editor} initialValue={textField.state} onChange={newValue => {
                         (Transforms as any).removeEmptyNodes = true;

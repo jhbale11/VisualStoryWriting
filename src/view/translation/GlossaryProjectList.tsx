@@ -33,7 +33,9 @@ export const GlossaryProjectList: React.FC<GlossaryProjectListProps> = ({ onProj
 
   // Auto-refresh when glossary extraction tasks complete
   useEffect(() => {
-    const glossaryTasks = Object.values(tasks).filter(t => t.type === 'glossary_extraction');
+    const glossaryTasks = Object.values(tasks).filter(
+      t => t.type === 'glossary_extraction' || t.type === 'glossary_reconsolidation'
+    );
     const hasCompletedTask = glossaryTasks.some(t => t.status === 'completed');
 
     if (hasCompletedTask) {

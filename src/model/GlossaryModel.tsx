@@ -18,6 +18,50 @@ export const initGemini = (apiKey: string) => {
   console.log('✅ Gemini API initialized successfully');
 };
 
+function tryInitGeminiFromEnv(): boolean {
+  if (geminiAPI) return true;
+  let key: string | undefined;
+  try {
+    const viteKey = (import.meta as any)?.env?.VITE_GEMINI_API_KEY;
+    if (typeof viteKey === 'string' && viteKey.trim()) key = viteKey.trim();
+  } catch {
+    /* noop */
+  }
+  if (!key) {
+    try {
+      const nodeKey = (typeof process !== 'undefined' && (process as any)?.env?.VITE_GEMINI_API_KEY) || undefined;
+      if (typeof nodeKey === 'string' && nodeKey.trim()) key = nodeKey.trim();
+    } catch {
+      /* noop */
+    }
+  }
+  if (!key) {
+    try {
+      const winKey = (window as any)?.VITE_GEMINI_API_KEY;
+      if (typeof winKey === 'string' && winKey.trim()) key = winKey.trim();
+    } catch {
+      /* noop */
+    }
+  }
+  if (!key) {
+    try {
+      const stored = localStorage.getItem('vsw.geminiApiKey');
+      if (stored && stored.trim()) key = stored.trim();
+    } catch {
+      /* noop */
+    }
+  }
+  if (!key) return false;
+  initGemini(key);
+  try {
+    (window as any).VITE_GEMINI_API_KEY = key;
+    localStorage.setItem('vsw.geminiApiKey', key);
+  } catch {
+    /* noop */
+  }
+  return true;
+}
+
 export interface CharacterRelationshipInArc {
   character_name: string;
   relationship_type: string;
@@ -167,7 +211,7 @@ interface GlossaryAction {
   setTotalChunks: (total: number) => void;
   setTargetLanguage: (language: 'en' | 'ja') => void;
   processChunk: (chunk: string, chunkIndex: number) => Promise<void>;
-  consolidateResults: () => Promise<void>;
+  consolidateResults: (options?: { force?: boolean }) => Promise<void>;
   addArc: (arc: GlossaryArc) => void;
   updateArc: (id: string, updates: Partial<GlossaryArc>) => void;
   deleteArc: (id: string) => void;
@@ -430,6 +474,14 @@ function normalizeKey(value: string): string {
   return String(value || '').trim().toLowerCase();
 }
 
+// Use combined English+Korean surface to avoid collisions between homonymous characters.
+function characterDedupKey(c?: { name?: string; korean_name?: string }): string {
+  if (!c) return '';
+  const en = normalizeKey(c.name || '');
+  const ko = normalizeKey(c.korean_name || '');
+  return ko ? `${en}|${ko}` : en;
+}
+
 function scoreCharacter(c: Partial<GlossaryCharacter> | undefined): number {
   if (!c) return 0;
   const strScore = (s?: string) => (s ? Math.min(200, s.trim().length) : 0);
@@ -553,9 +605,83 @@ function enrichArcsFromRaw(
 ): GlossaryArc[] {
   const { byKey, surfaceToKey } = buildRawCharacterIndex(rawChunks);
 
+  // Build a quick lookup of raw arc data so we can pull missing characters/relationships.
+  const rawArcLookup = new Map<
+    string,
+    { characters: any[]; relationships: any[] }
+  >();
+  for (const c of rawChunks) {
+    const raw = c?.raw;
+    const rawArcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
+    for (const ra of rawArcs) {
+      const key = normalizeKey(String(ra?.name || ra?.id || ''));
+      if (!key) continue;
+      const existing = rawArcLookup.get(key) || { characters: [], relationships: [] };
+      if (Array.isArray(ra?.characters)) existing.characters.push(...ra.characters);
+      if (Array.isArray(ra?.relationships)) existing.relationships.push(...ra.relationships);
+      rawArcLookup.set(key, existing);
+    }
+  }
+
   return arcs.map((arc) => {
+    const arcKey = normalizeKey(arc.name || arc.id || '');
+    const rawArcData = arcKey ? rawArcLookup.get(arcKey) : undefined;
+
+    const baseCharacters = Array.isArray(arc.characters) ? arc.characters : [];
+    let enrichedCharacters = baseCharacters.map((ch) => {
+      const key =
+        (ch.korean_name && byKey.has(normalizeKey(ch.korean_name))) ? normalizeKey(ch.korean_name) :
+        (byKey.has(normalizeKey(ch.name)) ? normalizeKey(ch.name) :
+          surfaceToKey.get(normalizeKey(ch.name)) ||
+          (ch.korean_name ? surfaceToKey.get(normalizeKey(ch.korean_name)) : undefined));
+
+      const rawBest = key ? byKey.get(key) : undefined;
+      return rawBest ? mergeCharactersRich(ch, rawBest) : ch;
+    });
+
+    // If the consolidated arc is missing characters, pull them from the raw arc data.
+    const existingCharKeys = new Set<string>();
+    enrichedCharacters.forEach((ch) => {
+      const k = normalizeKey(ch.korean_name || ch.name);
+      if (k) existingCharKeys.add(k);
+    });
+
+    if (rawArcData && Array.isArray(rawArcData.characters) && rawArcData.characters.length > 0) {
+      for (const rawCh of rawArcData.characters) {
+        if (!rawCh) continue;
+        const key = normalizeKey(String(rawCh.korean_name || rawCh.name || ''));
+        if (!key || existingCharKeys.has(key)) continue;
+
+        const best = byKey.get(key);
+        const fallback: GlossaryCharacter = {
+          id: String(rawCh.id || `char-${arcKey || key}-${existingCharKeys.size}`),
+          name: String(rawCh.name || rawCh.korean_name || 'Unknown'),
+          korean_name: String(rawCh.korean_name || ''),
+          description: String(rawCh.description || ''),
+          physical_appearance: String(rawCh.physical_appearance || ''),
+          personality: String(rawCh.personality || ''),
+          traits: Array.isArray(rawCh.traits) ? rawCh.traits : [],
+          emoji: String(rawCh.emoji || '👤'),
+          age: String(rawCh.age || ''),
+          gender: String(rawCh.gender || ''),
+          role: (rawCh.role as any) || 'supporting',
+          occupation: String(rawCh.occupation || ''),
+          abilities: Array.isArray(rawCh.abilities) ? rawCh.abilities : [],
+          speech_style: String(rawCh.speech_style || ''),
+          translation_notes: String(rawCh.translation_notes || ''),
+          name_variants: rawCh.name_variants || {},
+          aliases: Array.isArray(rawCh.aliases) ? rawCh.aliases : undefined,
+        };
+
+        const toAdd = best ? mergeCharactersRich(fallback, best) : fallback;
+        enrichedCharacters.push(toAdd);
+        existingCharKeys.add(key);
+      }
+    }
+
+    // Build surface map AFTER adding missing characters so relationships can map.
     const surfaceToCanonical = new Map<string, string>();
-    for (const ch of (arc.characters || [])) {
+    for (const ch of enrichedCharacters) {
       const canonical = ch.name;
       const surfaces = [
         ch.name,
@@ -569,50 +695,44 @@ function enrichArcsFromRaw(
       }
     }
 
-    const enrichedCharacters = (arc.characters || []).map((ch) => {
-      const key =
-        (ch.korean_name && byKey.has(normalizeKey(ch.korean_name))) ? normalizeKey(ch.korean_name) :
-        (byKey.has(normalizeKey(ch.name)) ? normalizeKey(ch.name) :
-          surfaceToKey.get(normalizeKey(ch.name)) ||
-          (ch.korean_name ? surfaceToKey.get(normalizeKey(ch.korean_name)) : undefined));
+    const resolveName = (rawName?: string): string | undefined => {
+      const norm = normalizeKey(String(rawName || ''));
+      if (!norm) return undefined;
+      const mapped = surfaceToCanonical.get(norm);
+      if (mapped) return mapped;
+      const direct = enrichedCharacters.find(
+        (c) => normalizeKey(c.name || '') === norm || normalizeKey(c.korean_name || '') === norm
+      );
+      return direct?.name;
+    };
 
-      const rawBest = key ? byKey.get(key) : undefined;
-      return rawBest ? mergeCharactersRich(ch, rawBest) : ch;
-    });
-
-    // Relationship enrichment: if missing or too sparse, pull from raw relationships that map to arc characters.
+    // Relationship enrichment: merge raw relationships that map to arc characters.
     let relationships = Array.isArray(arc.relationships) ? [...arc.relationships] : [];
     const relKey = (a: string, b: string, t: string) => `${normalizeKey(a)}|${normalizeKey(b)}|${normalizeKey(t)}`;
-    const existingRelKeys = new Set<string>(relationships.map(r => relKey(r.character_a, r.character_b, r.relationship_type)));
+    const existingRelKeys = new Set<string>(
+      relationships.map((r) => relKey(r.character_a, r.character_b, r.relationship_type))
+    );
 
-    if (relationships.length < 2) {
-      for (const c of rawChunks) {
-        const raw = c?.raw;
-        const rawArcs = Array.isArray(raw?.arcs) ? raw.arcs : [];
-        for (const ra of rawArcs) {
-          const rels = Array.isArray(ra?.relationships) ? ra.relationships : [];
-          for (const r of rels) {
-            const a = normalizeKey(String(r.character_a || ''));
-            const b = normalizeKey(String(r.character_b || ''));
-            if (!a || !b) continue;
-            const ca = surfaceToCanonical.get(a);
-            const cb = surfaceToCanonical.get(b);
+    const rawRels = rawArcData?.relationships || [];
+    for (const r of rawRels) {
+      const rawA = String((r as any).character_a || (r as any).characterName || (r as any).from || '');
+      const rawB = String((r as any).character_b || (r as any).target || (r as any).to || '');
+      const ca = resolveName(rawA);
+      const cb = resolveName(rawB);
             if (!ca || !cb) continue;
+
             const next = {
               character_a: ca,
               character_b: cb,
-              relationship_type: String(r.relationship_type || 'unknown'),
-              description: String(r.description || ''),
-              sentiment: r.sentiment || 'neutral',
-              addressing: String(r.addressing || ''),
+        relationship_type: String((r as any).relationship_type || 'unknown'),
+        description: String((r as any).description || ''),
+        sentiment: (r as any).sentiment || 'neutral',
+        addressing: String((r as any).addressing || ''),
             };
             const k = relKey(next.character_a, next.character_b, next.relationship_type);
             if (existingRelKeys.has(k)) continue;
             existingRelKeys.add(k);
             relationships.push(next);
-          }
-        }
-      }
     }
 
     // Term enrichment: ensure we don't end up with an empty/too-thin term list.
@@ -721,6 +841,11 @@ ${languageDirective}
 6. **STYLE GUIDE**
    - translation_guidelines: Global notes (e.g. Heroine differentiation)
 
+7. **STORY FEATURES / WORLD & TONE (더 풍부하게)**
+   - story_features: ["세계관/배경", "주요 갈등 축", "톤/분위기", "화자/서술 시점 특징", "반복되는 모티프/오브제", "foreshadowing/복선 신호"]
+   - world_building_notes: 핵심 설정, 제도/조직/계급, 마법/능력 시스템의 규칙을 요약
+   - translator_guardrails: 피해야 할 번역 선택(어색한 톤, 잘못된 뉘앙스)과 유지해야 할 일관성(호칭, 말투, 레지스터)
+
 **📋 JSON STRUCTURE:**
 {
   "arcs": [{
@@ -808,6 +933,31 @@ Text to analyze:
 ${chunk}`;
 
   try {
+      if (!geminiAPI) {
+        const envKey =
+          (() => {
+            try {
+              const v = (import.meta as any)?.env?.VITE_GEMINI_API_KEY;
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            } catch {/* noop */}
+            try {
+              const v = (typeof process !== 'undefined' && (process as any)?.env?.VITE_GEMINI_API_KEY) || undefined;
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            } catch {/* noop */}
+            try {
+              const v = (typeof window !== 'undefined' && (window as any)?.VITE_GEMINI_API_KEY) || undefined;
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            } catch {/* noop */}
+            try {
+              const v = typeof localStorage !== 'undefined' ? localStorage.getItem('vsw.geminiApiKey') : null;
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            } catch {/* noop */}
+            return undefined;
+          })();
+        if (envKey) {
+          initGemini(envKey);
+        }
+      }
     if (!geminiAPI) {
       throw new Error('Gemini API not initialized');
     }
@@ -1244,6 +1394,9 @@ ${JSON.stringify(arcs.map(a => ({
 **Return ONLY valid JSON. NO code blocks. NO markdown. Remove ALL empty fields.**`;
 
   try {
+      if (!geminiAPI) {
+        tryInitGeminiFromEnv();
+      }
     if (!geminiAPI) throw new Error('Gemini API not initialized');
 
     console.log('🔄 Consolidating arcs with LLM...');
@@ -1564,13 +1717,15 @@ Your job is to IMPROVE the glossary by doing a consolidation pass that:
 2) ARC CONSOLIDATION (DO NOT OVER-COLLAPSE)
    - Create a chronologically ordered arc list that is useful for translators.
    - If the input clearly contains multiple distinct arcs (different settings, goals, cast focus), keep them separate.
-   - HARD RULE: If there are 4+ chunk extractions, do NOT output fewer than 4 arcs.
+   - HARD RULE: If there are 4+ chunk extractions, do NOT output fewer than 4 arcs. For long works (80+ chunks), prefer 8-14 arcs (soft target).
    - Prefer 6-12 arcs for long works. Only merge arcs when they are truly the same segment.
-   - Each arc must contain complete character objects (not just names).
+   - Each arc must contain complete character objects (not just names) with: korean_name, name, physical_appearance, personality, speech_style, traits, translation_notes, role, abilities (if present), aliases/name_variants.
+   - Each arc must include relationships (with addressing when available) and key_events (5-12) showing major plot beats.
 
 3) ARC-SPECIFIC EXTRACTION / ENRICHMENT
    - For each arc, (re)extract and refine: personality, status/identity (신분/직함/역할), abilities, and relationships.
    - Relationships must include addressing when available (호칭/부르는 말).
+   - Include key_events per arc (aim for 5-12) to reflect story progression.
 
 3.5) CHARACTER RICHNESS (TRANSLATION GUIDE QUALITY)
    - Characters are the most important part of this glossary. Do NOT compress them into one-liners.
@@ -1584,6 +1739,7 @@ Your job is to IMPROVE the glossary by doing a consolidation pass that:
      - idioms, slang/insults, speech-pattern markers, illeism/quirks, honorific/title localization decisions,
        culturally loaded phrases, magic/system terminology with inconsistent renderings, ambiguous polysemy.
    - Avoid trivial obvious nouns/titles unless they have special nuance in THIS work.
+   - Story features/style guide: include genre, tone, narration style, translation guardrails (what to avoid/keep), and consistency notes if present.
    - For each term, provide a clear decision: canonical translation + allowed variants + what NOT to translate as + why.
    - Minimum: 12 terms if there is enough data; Maximum: 60 terms total per entire output.
 
@@ -1675,6 +1831,11 @@ RECURRING PHRASES (CRITICAL):
 - Build recurring_phrases by considering ALL chunk raw extractions.
 - Deduplicate and choose a canonical translation (or a primary + allowed variants).
 - Value should be a single string that includes: canonical translation + nuance + consistency guidance.
+
+STORY FEATURES / WORLD & TONE (CRITICAL):
+- Collect and keep story_features/world_building_notes/translator_guardrails if present in raw.
+- If multiple chunks mention setting/tone/foreshadowing/motifs, merge them into concise but specific guidance.
+- Do NOT drop style_guide fields; enrich them using repeated hints across chunks.
 
 IMPORTANT:
 - Remove empty fields.
@@ -1773,6 +1934,104 @@ type ConsolidatedGlossary = {
   style_guide?: Partial<StyleGuide>;
 };
 
+function buildReviewPayload(
+  glossary: ConsolidatedGlossary
+): ConsolidatedGlossary {
+  const clampArray = (arr: any[] | undefined, max: number): any[] =>
+    Array.isArray(arr) ? arr.slice(0, max) : [];
+
+  const arcs = (glossary.arcs || []).map((arc) => ({
+    ...arc,
+    // Keep only the most relevant fields and cap lengths to avoid prompt bloat.
+    characters: clampArray(
+      (arc.characters || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        korean_name: c.korean_name,
+        aliases: c.aliases,
+        name_variants: c.name_variants,
+        description: c.description,
+        physical_appearance: c.physical_appearance,
+        personality: c.personality,
+        speech_style: c.speech_style,
+        translation_notes: c.translation_notes,
+        traits: c.traits,
+        abilities: c.abilities,
+        role: c.role,
+      })),
+      40
+    ),
+    relationships: clampArray(arc.relationships, 40),
+    key_events: clampArray(arc.key_events, 12),
+    terms: clampArray(
+      (arc.terms || []).map((t) => ({
+        id: t.id,
+        original: t.original,
+        translation: t.translation,
+        context: t.context,
+        category: t.category,
+        aliases: t.aliases,
+        preferred_translation: (t as any).preferred_translation,
+        alternatives: (t as any).alternatives,
+        why_hard: (t as any).why_hard,
+        do_not_translate_as: (t as any).do_not_translate_as,
+        decision_notes: (t as any).decision_notes,
+      })),
+      80
+    ),
+    events: clampArray(arc.events, 30),
+  }));
+
+  return {
+    arcs,
+    honorifics: glossary.honorifics,
+    recurring_phrases: glossary.recurring_phrases,
+    style_guide: glossary.style_guide,
+  };
+}
+
+async function reviewConsolidatedGlossary(
+  glossary: ConsolidatedGlossary,
+  rawChunks: RawChunkExtraction[]
+): Promise<ConsolidatedGlossary> {
+  if (!geminiAPI) return glossary;
+
+  const payload = buildReviewPayload(glossary);
+  const prompt = `You are a Korean web novel translation expert.
+${getLanguageDirective(useGlossaryStore.getState().target_language)}
+
+You will be given a consolidated glossary JSON for a long work (80+ chunks).
+Tighten it WITHOUT losing critical translator-facing details.
+
+Key goals:
+- Arcs: keep 6-14 arcs. Each arc must have characters (with korean_name, name, physical_appearance, personality, speech_style, traits, translation_notes, role), relationships (with addressing/sentiment/type), and 5-12 key_events that show story progression.
+- Characters: keep richness; do not drop speech_style, translation_notes, traits, abilities if present.
+- Relationships: must include addressing when available; do not drop.
+- Terms: focus on translation-critical items (idioms, honorific/title choices, magic/system, slang/insults, culturally loaded, ambiguous). Provide canonical translation, allowed variants, avoid list, and why_hard/decision_notes if present. Limit to 20-60 items overall; per arc slice already capped.
+- Honorifics/recurring_phrases/style_guide: keep and polish; ensure they are concise but actionable.
+- Be concise but complete for translators. Do NOT invent new content; only merge/clean what is present.
+
+Return ONLY valid JSON matching the same top-level schema (arcs, honorifics, recurring_phrases, style_guide).`;
+
+  try {
+    const revised = await llmConsolidateJson(
+      `${prompt}
+
+CURRENT GLOSSARY (COMPACT):
+${JSON.stringify(payload, null, 2)}`
+    );
+    const normalized = normalizeConsolidated(revised);
+    // Backfill from raw to avoid empty relationships/characters if LLM trimmed too hard.
+    return {
+      ...normalized,
+      arcs: backfillGlossaryFromRaw(normalized.arcs || glossary.arcs, rawChunks),
+    };
+  } catch (e) {
+    console.warn('⚠️ Glossary review step failed; using pre-review glossary', e);
+    return glossary;
+  }
+}
+
 function summarizeRawForLLM(c: RawChunkExtraction) {
   // Keep only what matters for consolidation; avoid prompt bloat.
   const raw = c?.raw || {};
@@ -1857,6 +2116,9 @@ function batchByJsonSize<T>(items: T[], maxChars: number): T[][] {
 }
 
 async function llmConsolidateJson(prompt: string): Promise<any> {
+  if (!geminiAPI) {
+    tryInitGeminiFromEnv();
+  }
   if (!geminiAPI) throw new Error('Gemini API not initialized');
   const model = geminiAPI.getGenerativeModel({ model: 'gemini-3-pro-preview' });
   const result = await model.generateContent(prompt);
@@ -2131,13 +2393,16 @@ async function consolidateFromRawChunksHierarchical(input: RawChunkExtraction[])
 ${languageDirective}
 
 You will receive RAW per-chunk glossary extractions for a SUBSET of chunks.
-Your task: produce a HIGH-FIDELITY consolidated glossary JSON for THIS subset.
+Your task: produce a HIGH-FIDELITY consolidated glossary JSON for THIS subset (part of a long work, 80+ chunks overall). Capture all important items; do NOT drop key relationships or plot beats.
 
 CRITICAL REQUIREMENTS:
-- Do NOT over-summarize. Preserve character richness (speech_style, translation_notes, traits, abilities).
-- Merge duplicate entities within this subset, preserving aliases.
-- Preserve and enrich arc relationships (addressing, relationship_type, sentiment) when present in inputs.
-- Extract TRANSLATION-CRITICAL TERMS (hard decisions). Avoid trivial nouns/titles unless nuance matters.
+- Do NOT over-summarize. Preserve character richness (speech_style, translation_notes, traits, abilities); keep long fields when informative.
+- Characters per arc MUST include: korean_name, name, physical_appearance, personality, speech_style, traits, translation_notes, aliases/name_variants, role, abilities if present.
+- Merge duplicate entities within this subset, preserving aliases and name_variants.
+- Preserve and enrich ARC RELATIONSHIPS (addressing, relationship_type, sentiment) when present; do not drop them.
+- Each arc MUST include: characters (full objects), relationships, key_events (5-12 major beats), brief arc description/theme.
+- Extract TRANSLATION-CRITICAL TERMS (hard decisions: idioms, honorific/호칭 choices, magic/system terms, slang/insults, culturally loaded phrases, ambiguous words). Avoid trivial nouns/titles unless nuance matters.
+- Story Features: keep genre, tone, narration style, translation guardrails if mentioned.
 - Output ONLY valid JSON (no markdown).
 
 OUTPUT SCHEMA (must include these keys; you may add fields):
@@ -2174,13 +2439,14 @@ ${JSON.stringify(batch, null, 2)}
 ${languageDirective}
 
 You will receive MULTIPLE already-consolidated glossary slices (JSON).
-Merge them into ONE final glossary JSON.
+Merge them into ONE final glossary JSON for a long work (80+ chunks). DO NOT drop important relationships, events, or translation decisions.
 
 CRITICAL REQUIREMENTS:
 - ENTITY RESOLUTION across slices (same character with different names/aliases).
-- DO NOT over-collapse arcs. For long works, prefer 6-12 arcs. If there are many slices, do NOT output fewer than 6 arcs unless the story truly has fewer.
-- Preserve rich character fields (keep the best/longest descriptions and union traits/abilities/aliases).
+- DO NOT over-collapse arcs. For long works, prefer 6-12 arcs (max ~14). If there are many slices, do NOT output fewer than 6 arcs unless the story truly has fewer.
+- Preserve rich character fields (keep the best/longest descriptions and union traits/abilities/aliases). Characters must keep: korean_name, name, physical_appearance, personality, speech_style, traits, translation_notes, role, abilities (if any), aliases/name_variants.
 - Preserve arc-specific relationships and addressing; do not drop them.
+- Keep story progression visible: each arc should include key_events (5-12 when available) that show major beats, plus brief arc description/theme.
 - Terms must be translation-decision oriented (canonical choice + why + allowed variants + avoid list).
 - Output ONLY valid JSON (no markdown).
 
@@ -2328,6 +2594,9 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     console.log(`🚀 processChunk called for chunk ${chunkIndex}, text length: ${chunk.length}`);
     set({ isLoading: true });
 
+      if (!geminiAPI) {
+        tryInitGeminiFromEnv();
+      }
     if (!geminiAPI) {
       console.error('❌ Gemini API is not initialized! Please set API key first.');
       set({ isLoading: false });
@@ -2359,13 +2628,15 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     });
   },
 
-  consolidateResults: async () => {
+  consolidateResults: async (options?: { force?: boolean }) => {
+    const force = options?.force === true;
     set({ isLoading: true });
 
     const state = get();
     const totalChunks = state.totalChunks;
 
-    if (totalChunks <= 2) {
+    // Allow forced reconsolidation even for small chunk counts.
+    if (!force && totalChunks <= 2) {
       set({ isLoading: false });
       return;
     }
@@ -2378,15 +2649,34 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
       let consolidatedPhrases: Record<string, string> = {};
       let consolidatedStyleGuide: Partial<StyleGuide> = {};
 
+      if (!geminiAPI) {
+        tryInitGeminiFromEnv();
+      }
+
       const canUseLLM = !!geminiAPI;
 
-      if (canUseLLM && state.raw_chunks && state.raw_chunks.length >= 2) {
+      if (canUseLLM && state.raw_chunks && state.raw_chunks.length >= 1) {
         console.log(`📦 Using raw_chunks for consolidation: ${state.raw_chunks.length} chunks`);
         const consolidated = await consolidateFromRawChunksWithRetries(state.raw_chunks);
         consolidatedArcs = consolidated.arcs || [];
         consolidatedHonorifics = consolidated.honorifics || {};
         consolidatedPhrases = consolidated.recurring_phrases || {};
         consolidatedStyleGuide = consolidated.style_guide || {};
+
+        // Post-process with LLM reviewer to tighten but keep critical info.
+        const reviewed = await reviewConsolidatedGlossary(
+          {
+            arcs: consolidatedArcs,
+            honorifics: consolidatedHonorifics,
+            recurring_phrases: consolidatedPhrases,
+            style_guide: consolidatedStyleGuide,
+          },
+          state.raw_chunks
+        );
+        consolidatedArcs = reviewed.arcs || consolidatedArcs;
+        consolidatedHonorifics = reviewed.honorifics || consolidatedHonorifics;
+        consolidatedPhrases = reviewed.recurring_phrases || consolidatedPhrases;
+        consolidatedStyleGuide = reviewed.style_guide || consolidatedStyleGuide;
       } else {
         // Fallback if LLM not available or raw data missing (backward compatibility)
         if (!canUseLLM) {
@@ -2584,7 +2874,7 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     const state = get();
 
     // Extract all characters from all arcs
-    const allCharacters: GlossaryCharacter[] = [];
+  const allCharacters: GlossaryCharacter[] = [];
     const allEvents: GlossaryEvent[] = [];
     const allLocations: GlossaryLocation[] = [];
     const seenCharNames = new Set<string>();
@@ -2592,11 +2882,13 @@ export const useGlossaryStore = create<GlossaryState & GlossaryAction>()((set, g
     const seenLocationNames = new Set<string>();
 
     state.arcs.forEach(arc => {
-      // Collect unique characters
+      // Collect unique characters (by English+Korean key to avoid homonym collisions)
       (arc.characters || []).forEach(char => {
-        if (!seenCharNames.has(char.name.toLowerCase())) {
+        const key = characterDedupKey(char);
+        if (!key) return;
+        if (!seenCharNames.has(key)) {
           allCharacters.push(char);
-          seenCharNames.add(char.name.toLowerCase());
+          seenCharNames.add(key);
         }
       });
 
@@ -2988,7 +3280,9 @@ const aggregateLegacyFromArcs = (arcs: GlossaryArc[]) => {
 
   arcs.forEach(arc => {
     (arc.characters || []).forEach(char => {
-      const key = (char.id || char.name || `character-${characterMap.size}`).toLowerCase();
+      const key =
+        characterDedupKey(char) ||
+        (char.id ? normalizeKey(char.id) : `character-${characterMap.size}`);
       if (!characterMap.has(key)) {
         characterMap.set(key, deepClone(char));
       }
@@ -3126,8 +3420,10 @@ export function generateGlossaryString(state: GlossaryState): string {
   const allCharacters = new Map<string, GlossaryCharacter>();
   arcs.forEach(arc => {
     arc.characters.forEach(char => {
-      if (!allCharacters.has(char.name)) {
-        allCharacters.set(char.name, char);
+      const key = characterDedupKey(char) || char.id || char.name;
+      if (!key) return;
+      if (!allCharacters.has(key)) {
+        allCharacters.set(key, char);
       }
     });
   });

@@ -7,6 +7,7 @@ import { applyViewSnapshot } from '../../glossary/utils/viewSnapshots';
 import { restoreGlossarySnapshot, useGlossaryStore } from '../../model/GlossaryModel';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import { taskRunner } from '../../translation/services/TaskRunner';
+import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
 
 export const GlossaryProjectSetup: React.FC = () => {
   const { projectId } = useParams();
@@ -23,7 +24,16 @@ export const GlossaryProjectSetup: React.FC = () => {
     return list[0];
   }, [tasks, projectId]);
 
+  const latestReconTask = useMemo(() => {
+    if (!projectId) return undefined;
+    const list = tasks
+      .filter((t) => t.type === 'glossary_reconsolidation' && t.metadata?.vswProjectId === projectId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return list[0];
+  }, [tasks, projectId]);
+
   const isRunning = latestTask?.status === 'running' || latestTask?.status === 'pending';
+  const isReconRunning = latestReconTask?.status === 'running' || latestReconTask?.status === 'pending';
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -109,6 +119,23 @@ export const GlossaryProjectSetup: React.FC = () => {
     });
   };
 
+  const runReconsolidation = async () => {
+    if (!projectId || isReconRunning) return;
+    if (!rawChunks.length) {
+      alert('Raw chunk 데이터가 없어서 reconsolidate할 수 없습니다.');
+      return;
+    }
+    const reconTaskId = createTask({
+      type: 'glossary_reconsolidation',
+      projectId,
+      metadata: { vswProjectId: projectId },
+    });
+    taskRunner.runTask(reconTaskId).catch((e) => {
+      console.error('[GlossaryProjectSetup] reconsolidation failed', e);
+      alert(`Reconsolidation failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    });
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between gap-4">
@@ -117,6 +144,20 @@ export const GlossaryProjectSetup: React.FC = () => {
           <div className="text-sm text-gray-500">{projectId}</div>
         </div>
         <div className="flex gap-2">
+          <Button
+            color="secondary"
+            variant="flat"
+            startContent={<TbArrowBigRightLinesFilled />}
+            onPress={runReconsolidation}
+            isDisabled={
+              !projectId ||
+              rawChunks.length === 0 ||
+              isReconRunning ||
+              (project?.status === 'processing')
+            }
+          >
+            Re-consolidate (raw chunks)
+          </Button>
           <Button variant="flat" onPress={() => { window.location.hash = '/'; }}>
             ← Back
           </Button>
@@ -198,6 +239,50 @@ export const GlossaryProjectSetup: React.FC = () => {
                 >
                   Resume / Restart Extraction
                 </Button>
+              </div>
+            )}
+
+            <Divider className="my-4" />
+            <div className="text-sm text-gray-700 font-semibold flex items-center gap-2">
+              재-Consolidation (LLM, raw 기반)
+              <Chip size="sm" variant="flat" color={isReconRunning ? 'warning' : 'default'}>
+                {isReconRunning ? 'running' : (latestReconTask?.status || 'idle')}
+              </Chip>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              Raw chunks: {rawChunks.length} · Processed {processed}/{total || '?'}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <Button
+                size="sm"
+                color="secondary"
+                variant="flat"
+                startContent={<TbArrowBigRightLinesFilled />}
+                onPress={runReconsolidation}
+                isDisabled={
+                  isReconRunning ||
+                  !projectId ||
+                  rawChunks.length === 0 ||
+                  (project?.status === 'processing') ||
+                  ((total || 0) > 0 && processed < (total || 0))
+                }
+              >
+                Re-consolidate now
+              </Button>
+              <Chip size="sm" variant="flat">
+                최신 결과를 저장소에 반영
+              </Chip>
+            </div>
+            {latestReconTask ? (
+              <div className="mt-2 space-y-2">
+                <div className="text-xs text-gray-600">
+                  Task: <b>{latestReconTask.status}</b> — {latestReconTask.message}
+                </div>
+                <Progress value={(latestReconTask.progress || 0) * 100} size="sm" />
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-gray-500">
+                모든 chunk 추출이 끝난 후 raw 데이터를 LLM으로 다시 병합하려면 버튼을 눌러주세요.
               </div>
             )}
           </CardBody>

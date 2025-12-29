@@ -4,12 +4,12 @@ import { PublishAgent } from '../agents/PublishAgent';
 import { TranslationWorkflow } from '../workflow/TranslationWorkflow';
 import { LLMClientFactory } from '../llm/clients';
 import { glossaryProjectStorage } from '../../glossary/services/GlossaryProjectStorage';
+import { restoreGlossarySnapshot, serializeGlossaryState, useGlossaryStore } from '../../model/GlossaryModel';
 import { DEFAULT_PUBLISH_PROMPT } from '../prompts/defaultPrompts';
 import { browserStorage } from './BrowserStorage';
 import { ParagraphMatchingAgent } from '../agents/ParagraphMatchingAgent';
 import { ReviewAgent } from '../agents/ReviewAgent';
 import type { Chunk, TranslationProject } from '../types';
-import type { GlossaryProjectRecord } from '../../glossary/types';
 
 export class TaskRunner {
   private runningTasks: Set<string> = new Set();
@@ -137,6 +137,9 @@ export class TaskRunner {
         case 'glossary_extraction':
           await this.runGlossaryExtractionTask(taskId, abortController.signal);
           break;
+        case 'glossary_reconsolidation':
+          await this.runGlossaryReconsolidationTask(taskId, abortController.signal);
+          break;
         case 'publish':
           await this.runPublishTask(taskId, task.projectId, abortController.signal);
           break;
@@ -187,6 +190,57 @@ export class TaskRunner {
     }
     this.runningTasks.delete(taskId);
     store.updateTask(taskId, { status: 'cancelled' });
+  }
+
+  private async runGlossaryReconsolidationTask(
+    taskId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    const store = useTranslationStore.getState();
+    const task = store.getTask(taskId);
+    if (!task?.projectId) throw new Error('Project ID missing for reconsolidation task');
+
+    store.updateTask(taskId, { message: 'Loading project…', progress: 0.05 });
+
+    const record = await glossaryProjectStorage.getProject(task.projectId);
+    if (!record?.glossary) throw new Error('Glossary data not found for project');
+
+    const rawChunks = record.glossary.raw_chunks || [];
+    if (rawChunks.length === 0) {
+      throw new Error('No raw chunk data available to reconsolidate');
+    }
+
+    if (signal.aborted) throw new Error('Task aborted');
+
+    // Prepare glossary store with existing snapshot (including raw chunks)
+    restoreGlossarySnapshot(record.glossary, { fullTextFallback: record.glossary.fullText || '' });
+    const gStore = useGlossaryStore.getState();
+    gStore.setTotalChunks(record.totalChunks || rawChunks.length || 0);
+
+    store.updateTask(taskId, { message: 'Re-consolidating with LLM…', progress: 0.2 });
+    if (signal.aborted) throw new Error('Task aborted');
+
+    await gStore.consolidateResults({ force: true });
+
+    if (signal.aborted) throw new Error('Task aborted');
+    store.updateTask(taskId, { message: 'Saving results…', progress: 0.9 });
+
+    const updatedSnapshot = serializeGlossaryState();
+    const updatedProject = {
+      ...record,
+      glossary: {
+        ...updatedSnapshot,
+        raw_chunks: updatedSnapshot.raw_chunks || rawChunks,
+      },
+      status: record.status === 'processing' ? 'ready' : record.status,
+      processedChunks: record.processedChunks ?? rawChunks.length,
+      totalChunks: record.totalChunks ?? rawChunks.length,
+      updatedAt: Date.now(),
+    };
+
+    await glossaryProjectStorage.saveProject(updatedProject);
+
+    store.updateTask(taskId, { progress: 1, message: 'Re-consolidation complete' });
   }
 
   private async runGlossaryTask(
@@ -365,13 +419,34 @@ export class TaskRunner {
 
     store.updateTask(taskId, { progress: 0.1, message: 'Initializing...' });
 
+    // Emergency prompt to enforce highest-priority translation safeguards on retranslate
+    const emergencyPrompt = [
+      '🚨 EMERGENCY TRANSLATION DIRECTIVE (APPLIES TO translation/enhancement/proofread):',
+      '- Absolute fidelity to Korean source; no omissions/additions/reordering of meaning.',
+      '- Preserve all names, titles, honorifics, terms per glossary. Do NOT localize or alter proper nouns.',
+      '- Keep dialogue tone/register; maintain character voice and speech mannerisms.',
+      '- Respect formatting: quotes, line breaks, list/numbering, emphasis markers.',
+      '- If ambiguous, prefer literal/neutral rendering; do NOT invent details.',
+      '- Keep key nouns/verbs consistent across sentences; avoid synonym drift.',
+    ].join(' ');
+
+    const prependEmergency = (userPrompt?: string) =>
+      emergencyPrompt + (userPrompt ? '\n' + userPrompt : '');
+
+    const mergedPrompts = {
+      ...project.prompts,
+      translation: prependEmergency(project.prompts?.translation),
+      enhancement: prependEmergency(project.prompts?.enhancement),
+      proofreader: prependEmergency(project.prompts?.proofreader),
+    };
+
     const workflow = new TranslationWorkflow({
       agentConfigs: project.agent_configs,
       glossary: project.glossary,
       maxRetries: project.max_retries,
       enableProofreader: project.enable_proofreader,
       targetLanguage: project.language,
-      customPrompts: project.prompts,
+      customPrompts: mergedPrompts,
     });
 
     store.updateChunk(projectId, chunkId, { status: 'processing' });

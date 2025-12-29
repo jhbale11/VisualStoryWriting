@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslationStore } from '../../translation/store/TranslationStore';
 import type { TranslationProject, ParagraphMatchResult } from '../../translation/types';
 import TranslationReviewInterface from '../textoshopReview/TranslationReviewInterface';
-import { Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from '@nextui-org/react';
+import { Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Textarea } from '@nextui-org/react';
 import { FiX, FiDownload, FiGitMerge } from 'react-icons/fi';
 import { taskRunner } from '../../translation/services/TaskRunner';
 
@@ -24,6 +24,8 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
   const [currentChunkIndex, setCurrentChunkIndex] = useState(initialChunkIndex);
   const [retranslateTaskId, setRetranslateTaskId] = useState<string | null>(null);
   const [matchTaskId, setMatchTaskId] = useState<string | null>(null);
+  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+  const [emergencyPromptInput, setEmergencyPromptInput] = useState<string>('');
 
   // Download State
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
@@ -138,7 +140,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
     });
   };
 
-  const handleRetranslate = () => {
+  const handleRetranslate = (userEmergencyPrompt?: string) => {
     if (!project.glossary) {
       alert('Glossary is required for retranslation');
       return;
@@ -153,6 +155,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
       type: 'retranslate',
       projectId: effectiveProject.id,
       chunkId: currentChunk.id,
+      metadata: userEmergencyPrompt ? { emergencyPrompt: userEmergencyPrompt } : undefined,
     });
 
     setRetranslateTaskId(taskId);
@@ -170,32 +173,32 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
       {/* Top bar with close and download buttons */}
       {onClose && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10000, display: 'flex', gap: 8 }}>
-          <Button
-            color="warning"
-            variant="flat"
-            startContent={<FiGitMerge />}
-            onPress={handleRunParagraphMatching}
-            isLoading={isMatching}
-            isDisabled={isMatching}
-          >
-            Match Paragraphs
-          </Button>
-          <Button
-            color="secondary"
-            variant="flat"
-            startContent={<FiDownload />}
-            onPress={handleDownloadAllClick}
-          >
-            Download All
-          </Button>
-          <Button
-            color="default"
-            variant="flat"
-            isIconOnly
-            onPress={onClose}
-          >
-            <FiX size={20} />
-          </Button>
+        <Button
+          color="warning"
+          variant="flat"
+          startContent={<FiGitMerge />}
+          onPress={handleRunParagraphMatching}
+          isLoading={isMatching}
+          isDisabled={isMatching}
+        >
+          Match Paragraphs
+        </Button>
+        <Button
+          color="secondary"
+          variant="flat"
+          startContent={<FiDownload />}
+          onPress={handleDownloadAllClick}
+        >
+          Download All
+        </Button>
+        <Button
+          color="default"
+          variant="flat"
+          isIconOnly
+          onPress={onClose}
+        >
+          <FiX size={20} />
+        </Button>
         </div>
       )}
 
@@ -209,7 +212,7 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
         initialReviewIssues={currentChunk.translations.reviewIssues as any}
         onSave={handleSave}
         onNavigate={handleNavigate}
-        onRetranslate={handleRetranslate}
+        onRetranslate={() => setIsEmergencyModalOpen(true)}
         isRetranslating={isRetranslating}
         canNavigatePrev={currentChunkIndex > 0}
         canNavigateNext={currentChunkIndex < effectiveProject.chunks.length - 1}
@@ -243,6 +246,48 @@ export const TranslationReview: React.FC<TranslationReviewProps> = ({ project, i
             </Button>
             <Button color="primary" onPress={handleDownloadAllConfirm}>
               Download
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Emergency Prompt Modal */}
+      <Modal
+        isOpen={isEmergencyModalOpen}
+        onClose={() => setIsEmergencyModalOpen(false)}
+        size="lg"
+        classNames={{
+          wrapper: 'z-[1000000]',
+          backdrop: 'z-[999999]',
+          base: 'z-[1000001]',
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>Emergency Prompt for Retranslation</ModalHeader>
+          <ModalBody>
+            <p style={{ fontSize: 12, color: '#555' }}>
+              입력한 프롬프트는 translation / enhancement / proofread 에이전트 모두에 우선 적용됩니다.
+            </p>
+            <Textarea
+              label="Emergency Prompt"
+              minRows={4}
+              placeholder="번역시 절대 지켜야 할 지침을 적어주세요 (예: 고유명/호칭 유지, 특정 톤 유지 등)"
+              value={emergencyPromptInput}
+              onChange={(e) => setEmergencyPromptInput(e.target.value)}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setIsEmergencyModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="secondary"
+              onPress={() => {
+                setIsEmergencyModalOpen(false);
+                handleRetranslate(emergencyPromptInput.trim() || undefined);
+              }}
+            >
+              Retranslate with Prompt
             </Button>
           </ModalFooter>
         </ModalContent>

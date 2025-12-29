@@ -6,7 +6,7 @@ import { ReactEditor } from 'slate-react';
 import { z } from 'zod';
 import { create } from 'zustand';
 import { useStudyStore } from "./StudyStub";
-import { LAYER_COLOR_PALETTE } from '../view/components/LayerManager';
+import { LAYER_COLOR_PALETTE } from '../view/components/layerColors';
 import { DrawTool } from './tools/toolbarTools/DrawTool';
 import { EraserTool } from './tools/toolbarTools/EraserTool';
 import { SingularizerTool } from './tools/toolbarTools/PluralizerTool';
@@ -15,6 +15,7 @@ import { RepairTool } from './tools/toolbarTools/RepairTool';
 import { SelectionTool } from './tools/toolbarTools/SelectionTool';
 // import { SmudgeTool } from './tools/toolbarTools/SmudgeTool';
 import { FirstPersonPOVTool, ThirdPersonLimitedPOVTool, ThirdPersonOmniscientPOVTool } from './tools/toolbarTools/TextTenseTools';
+import { TextEditTool } from './tools/toolbarTools/TextEditTool';
 import { TonePickerTool } from './tools/toolbarTools/TonePickerTool';
 import { ToolbarTool } from './tools/toolbarTools/ToolbarTool';
 import { ItalicTool } from './tools/toolbarTools/ItalicTool';
@@ -216,8 +217,10 @@ export const tools : {[toolName: string]: ToolbarTool} = {}
 
 
 function getInitialState() {
+    const editTool = (tools[TextEditTool.getToolName()] = new TextEditTool());
+    const selectionTool = (tools[SelectionTool.getToolName()] = new SelectionTool());
     const toolsOrderInToolbar : string[][] = [
-        [(tools[SelectionTool.getToolName()] = new SelectionTool()).name], 
+        [editTool.name, selectionTool.name], 
         [(tools[DrawTool.getToolName()] = new DrawTool()).name], 
         [(tools[TonePickerTool.getToolName()] = new TonePickerTool()).name], 
         [(tools[SynonymTool.getToolName()] = new SynonymTool()).name], 
@@ -250,7 +253,7 @@ function getInitialState() {
     const initialState: ModelState = {
         inMultipleSelectionMode: false,
         selectedTexts: [],
-        selectedTool: SelectionTool.getToolName(),
+        selectedTool: TextEditTool.getToolName(),
         editors: {},
         animateChangesUntilTimestamp: 0,
         tone: [
@@ -295,6 +298,12 @@ export const useModelStore = create<ModelState & ModelAction>()((set, get) => ({
     setSelectedTool: (tool) => {
         set((state) => ({ selectedTool: tool }))
         useStudyStore.getState().logEvent("TOOL_SELECTED", {tool: tool});
+        const newTool = tools[tool];
+        const mode = newTool?.selectionOverlayMode ? newTool.selectionOverlayMode() : (newTool?.enableSelectionOverlay ? (newTool.enableSelectionOverlay() ? "full" : "disabled") : "full");
+        if (mode !== "full") {
+            // Clear any custom overlay marks when going to visual-only or disabled
+            get().setSelectedTexts([]);
+        }
     },
     getSelectedTool: () => tools[get().selectedTool],
     executePrompt: async (executablePrompt) => {

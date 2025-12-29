@@ -66,6 +66,7 @@ interface ReviewIssue {
 }
 
 const PARAGRAPH_SPLIT_REGEX = /\n\n+/;
+const DEBUG_MATCHING = false; // Set true for verbose matching layout logs
 
 const normalizeParagraphBreaks = (text: string): string => {
   if (!text) return '';
@@ -101,6 +102,27 @@ const computeParagraphRanges = (text: string, paragraphs: string[]): Array<{ sta
 };
 
 const normalizeParagraph = (text: string): string => text.replace(/\s+/g, ' ').trim();
+
+// Fallback: ensure Korean text is never hidden even if matching fails or is absent.
+const buildFallbackMatches = (koreanText: string, englishCount: number): ParagraphMatchResult => {
+  const koParas = splitTextIntoParagraphs(normalizeParagraphBreaks(koreanText));
+  const aligned: string[] = new Array(Math.max(englishCount, 1)).fill('');
+  const limit = Math.min(englishCount, koParas.length);
+  for (let i = 0; i < limit; i++) {
+    aligned[i] = koParas[i];
+  }
+  const remaining = koParas.slice(limit);
+  const unmatchedKorean = remaining.length > 0
+    ? [{ beforeEnglishIndex: englishCount, text: remaining.join('\n\n') }]
+    : [];
+  const matches = aligned.map((_, idx) => ({ englishIndex: idx, koreanIndex: idx }));
+  return {
+    englishParagraphs: new Array(Math.max(englishCount, 1)).fill(''),
+    koreanParagraphs: aligned,
+    unmatchedKorean,
+    matches,
+  };
+};
 
 // NOTE: buildParagraphAnchors/assignGapMappings were used by an older remap strategy.
 // We now remap using containment heuristics so merged paragraphs preserve KR slices.
@@ -219,14 +241,19 @@ const remapParagraphMatches = (
 // NOTE: english->korean paragraph mapping for the "immutable KR panel" mode was removed.
 // Korean panel now follows EN layout and uses `effectiveMatches.koreanParagraphs` + `effectiveMatches.unmatchedKorean`.
 
+const englishNodesToText = (nodes: any[] | undefined | null): string => {
+  if (!nodes || !Array.isArray(nodes)) return '';
+  const nodesText = nodes.map((node: any) => SlateNode.string(node));
+  const rawText = nodesText.join('\n\n');
+  return normalizeParagraphBreaks(rawText);
+};
+
 const getEditorPlainText = (): string => {
   const editor = textFieldEditors['translationField'];
   if (!editor || !Array.isArray(editor.children)) {
     return '';
   }
-  const nodesText = editor.children.map((node: any) => SlateNode.string(node));
-  const rawText = nodesText.join('\n\n');
-  return normalizeParagraphBreaks(rawText);
+  return englishNodesToText(editor.children as any);
 };
 
 export default function TranslationReviewInterface(props: TranslationReviewInterfaceProps) {
@@ -251,16 +278,22 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     lastEnglishLiveRef.current = canonicalEnglishText;
   }, [canonicalEnglishText, props.chunkId]);
 
+  // Keep englishTextLive in sync with editor state immediately (no polling)
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      const next = getEditorPlainText();
-      if (!next) return;
-      if (next !== lastEnglishLiveRef.current) {
-        lastEnglishLiveRef.current = next;
-        setEnglishTextLive(next);
-      }
-    }, 250);
-    return () => window.clearInterval(interval);
+    const pushText = (stateNodes: any) => {
+      const next = englishNodesToText(stateNodes as any);
+      if (next === lastEnglishLiveRef.current) return;
+      lastEnglishLiveRef.current = next;
+      setEnglishTextLive(next);
+    };
+
+    const unsubscribe = useModelStore.subscribe((state) => {
+      const tf = state.textFields.find(t => t.id === 'translationField');
+      pushText(tf?.state);
+    });
+    // Fire once immediately with current state
+    pushText(useModelStore.getState().textFields.find(tf => tf.id === 'translationField')?.state);
+    return () => unsubscribe();
   }, [props.chunkId]);
 
   const englishParagraphsForLayout = useMemo(
@@ -276,9 +309,18 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
   const [reviewText, setReviewText] = useState('');
   const reviewModal = useDisclosure();
   const [parsedIssues, setParsedIssues] = useState<ReviewIssue[]>([]);
-  const [issuePositions, setIssuePositions] = useState<{ top: number, left: number, textRect: DOMRect }[]>([]);
+  const [issuePositions, setIssuePositions] = useState<{ top: number; left: number; textRect: DOMRect; anchored: boolean }[]>([]);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
   const reviewLoadedKeyRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
+  const autoSaveSignatureRef = useRef<string>('');
+  const skipInitialAutoSaveRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Best-effort: derive stable start/end offsets so we can anchor cards even when the text changes a bit.
   // This is intentionally conservative (exact substring search only).
@@ -417,6 +459,17 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     return remapParagraphMatches(props.paragraphMatches, englishTextLive);
   }, [props.paragraphMatches, englishParagraphsForLayout.length, englishTextLive]);
 
+  // Display-safe matches: if matching failed/missing, fall back to raw Korean so nothing is hidden.
+  const displayMatches = useMemo(() => {
+    if (effectiveMatches && (
+      (effectiveMatches.koreanParagraphs && effectiveMatches.koreanParagraphs.some(k => (k || '').trim().length > 0)) ||
+      (effectiveMatches.unmatchedKorean && effectiveMatches.unmatchedKorean.length > 0)
+    )) {
+      return effectiveMatches;
+    }
+    return buildFallbackMatches(props.koreanText, englishParagraphsForLayout.length);
+  }, [effectiveMatches, props.koreanText, englishParagraphsForLayout.length]);
+
   const activeKoreanRowIndex = activeEnglishParagraphIndex;
 
   // Korean panel is English-layout aligned, but Korean content is sourced from fullKoreanParagraphs
@@ -424,11 +477,11 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
 
   // Update paragraph matching lines based on text content
   useEffect(() => {
-    if (!effectiveMatches) {
+    if (!displayMatches) {
       setMatchingLines([]);
       return;
     }
-    const matchResult = effectiveMatches;
+    const matchResult = displayMatches;
 
     const updateMatchingLines = () => {
       const background = document.getElementById('background');
@@ -455,9 +508,11 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       }
 
       const englishParagraphs = englishParagraphsForLayout;
-      console.log('Korean row anchors:', koreanRows.length);
-      console.log('English paragraphs (by \\n\\n):', englishParagraphs.length);
-      console.log('Originally matched:', matchResult?.matches.length || 0);
+      if (DEBUG_MATCHING) {
+        console.log('Korean row anchors:', koreanRows.length);
+        console.log('English paragraphs (by \\n\\n):', englishParagraphs.length);
+        console.log('Originally matched:', matchResult?.matches.length || 0);
+      }
 
       const paragraphRanges = computeParagraphRanges(englishText, englishParagraphs);
       const englishParaPositions: Array<{ top: number, height: number }> = [];
@@ -487,7 +542,9 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         }
       });
 
-      console.log('English paragraph positions found:', englishParaPositions.length);
+      if (DEBUG_MATCHING) {
+        console.log('English paragraph positions found:', englishParaPositions.length);
+      }
 
       const contentEditable = transField.querySelector('[contenteditable="true"]');
       if (!contentEditable) return;
@@ -517,7 +574,9 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         lines.push({ x1, y1, x2, y2, englishIndex: enIdx, hasKorean });
       }
 
-      console.log('Matching lines drawn:', lines.length);
+      if (DEBUG_MATCHING) {
+        console.log('Matching lines drawn:', lines.length);
+      }
       setMatchingLines(lines);
     };
 
@@ -566,7 +625,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
         });
 
         // Only highlight if within matched range
-        const matchedCount = effectiveMatches.matches.length;
+        const matchedCount = displayMatches.matches.length;
         if (foundParaIndex >= 0 && foundParaIndex < matchedCount) {
           setActiveEnglishParagraphIndex(foundParaIndex);
         } else {
@@ -583,7 +642,7 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [effectiveMatches]);
+  }, [displayMatches]);
 
   // Initialize the model with English text field only - only on mount or when chunk changes
   useEffect(() => {
@@ -664,6 +723,57 @@ export default function TranslationReviewInterface(props: TranslationReviewInter
       if (cleanup) cleanup();
     };
   }, [props.chunkId]); // Only re-initialize when chunk changes, not when text changes
+
+  // Keep translation field height in sync with live content to avoid overlay drift
+  useEffect(() => {
+    const trId = 'translationField';
+    const adjustHeight = () => {
+      const koreanPanel = document.getElementById('korean-panel') as HTMLElement | null;
+      const trEl = document.getElementById(trId) as HTMLElement | null;
+      if (!koreanPanel || !trEl) return;
+      const tf = useModelStore.getState().textFields.find(t => t.id === trId);
+      if (!tf) return;
+      const englishHeight = Math.max(600, koreanPanel.scrollHeight, trEl.scrollHeight);
+      if (englishHeight !== tf.height) {
+        useModelStore.getState().setTextField(trId, { ...tf, height: englishHeight });
+      }
+    };
+
+    const timeoutId = window.setTimeout(adjustHeight, 150);
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => adjustHeight())
+      : null;
+    const kp = document.getElementById('korean-panel');
+    if (kp && resizeObserver) resizeObserver.observe(kp);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      resizeObserver?.disconnect();
+    };
+  }, [englishTextLive]);
+
+  // Auto-save when external translation/matching results arrive (retranslate or paragraph match)
+  useEffect(() => {
+    const signature = `${canonicalEnglishText}||${JSON.stringify(props.paragraphMatches ?? null)}`;
+
+    // Skip the very first run to avoid redundant save on initial mount
+    if (skipInitialAutoSaveRef.current) {
+      skipInitialAutoSaveRef.current = false;
+      autoSaveSignatureRef.current = signature;
+      return;
+    }
+
+    if (signature === autoSaveSignatureRef.current) return;
+
+    const textForAutoSave = lastEnglishLiveRef.current || canonicalEnglishText || englishTextLive;
+    if (!textForAutoSave && !props.paragraphMatches) {
+      autoSaveSignatureRef.current = signature;
+      return;
+    }
+
+    props.onSave(textForAutoSave, props.paragraphMatches);
+    autoSaveSignatureRef.current = signature;
+  }, [canonicalEnglishText, props.paragraphMatches, englishTextLive]);
 
   // Recalculate positions when issues change
   useEffect(() => {
@@ -933,6 +1043,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
       model: 'gpt-5.1-2025-11-13',
       response_format: { zodObject: schema, name: 'review' }
     }).then((res) => {
+      if (!isMountedRef.current) return;
       const parsed = res.parsed as { issues: ReviewIssue[] } | undefined;
       console.log('Review result:', parsed);
       console.log('Number of issues:', parsed?.issues?.length || 0);
@@ -947,6 +1058,11 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
       } else {
         setReviewText(res.result);
       }
+    }).catch((err) => {
+      console.error('Review prompt failed:', err);
+      if (!isMountedRef.current) return;
+      setReviewText(`Review failed: ${err?.message || String(err)}`);
+      setParsedIssues([]);
     });
   };
 
@@ -962,7 +1078,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
     if (!text) return;
 
     const state = editor.children as any;
-    const positions: { top: number, left: number, textRect: DOMRect }[] = [];
+    const positions: { top: number; left: number; textRect: DOMRect; anchored: boolean }[] = [];
 
     for (const issue of parsedIssues) {
       let start = issue.start;
@@ -972,7 +1088,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
         if (at >= 0) { start = at; end = at + issue.text.length; }
       }
       if (start === undefined || end === undefined) {
-        positions.push({ top: 0, left: 0, textRect: new DOMRect() });
+        positions.push({ top: 0, left: 0, textRect: new DOMRect(), anchored: false });
         continue;
       }
 
@@ -992,13 +1108,14 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
           positions.push({
             top: relativeTop,
             left: relativeLeft,
-            textRect: rect
+            textRect: rect,
+            anchored: true
           });
         } catch {
-          positions.push({ top: 0, left: 0, textRect: new DOMRect() });
+          positions.push({ top: 0, left: 0, textRect: new DOMRect(), anchored: false });
         }
       } else {
-        positions.push({ top: 0, left: 0, textRect: new DOMRect() });
+        positions.push({ top: 0, left: 0, textRect: new DOMRect(), anchored: false });
       }
     }
 
@@ -1043,7 +1160,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
 
   // Render paragraph matching lines overlay
   const renderMatchingLines = () => {
-    if (!props.paragraphMatches || matchingLines.length === 0) return null;
+    if (matchingLines.length === 0) return null;
 
     const background = document.getElementById('background');
     if (!background) return null;
@@ -1205,9 +1322,9 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {englishParagraphsForLayout.map((_, rowIdx) => {
-                  const krAligned = effectiveMatches?.koreanParagraphs || [];
+                  const krAligned = displayMatches?.koreanParagraphs || [];
                   const krText = krAligned[rowIdx] ?? '';
-                  const unmatched = (effectiveMatches?.unmatchedKorean || []).filter(u => u.beforeEnglishIndex === rowIdx);
+                  const unmatched = (displayMatches?.unmatchedKorean || []).filter(u => u.beforeEnglishIndex === rowIdx);
 
                   const hasAligned = krText.trim().length > 0;
                   const isActive = activeKoreanRowIndex === rowIdx;
@@ -1263,7 +1380,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
                 })}
 
                 {/* Unmatched Korean after the last EN row */}
-                {(effectiveMatches?.unmatchedKorean || [])
+                {(displayMatches?.unmatchedKorean || [])
                   .filter(u => u.beforeEnglishIndex === englishParagraphsForLayout.length)
                   .map((u, j) => (
                     <div
@@ -1320,7 +1437,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
               // We want: (trRect.top + pos.top - trEl.scrollTop) - bgRect.top
               let desiredTop: number;
 
-              const anchored = !!pos && pos.top !== 0;
+              const anchored = !!pos && pos.anchored;
               if (anchored) {
                 desiredTop = (trRect.top + pos.top - trEl.scrollTop) - bgRect.top;
               } else {
@@ -1350,7 +1467,7 @@ REMEMBER: You MUST return AT LEAST 15 issues. Count them before responding.`;
               <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }}>
                 {parsedIssues.map((iss, idx) => {
                   const cardTop = adjustedPositions[idx] ?? (lastBottom + cardMinGap + idx * 12);
-                  const anchored = !!issuePositions[idx] && issuePositions[idx].top !== 0;
+                  const anchored = !!issuePositions[idx] && issuePositions[idx].anchored;
 
                   const color = CATEGORY_COLOR[iss.category] || 'rgba(255,196,0,0.45)';
                   const solidColor = color.replace('0.35', '1');

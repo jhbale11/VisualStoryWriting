@@ -3,6 +3,7 @@ import { NodeApi, NodeRendererProps, Tree } from "react-arborist";
 import { Editor, Node, Transforms } from "slate";
 import { HiearchicalLayer, useModelStore } from "../../model/Model";
 import { TextLayerUtils } from "../../model/utils/TextLayerUtils";
+import { LAYER_COLOR_PALETTE } from "./layerColors";
 
 import { BiSolidLayerPlus } from "react-icons/bi";
 import { FaTrashAlt } from "react-icons/fa";
@@ -12,11 +13,6 @@ import { RiEyeCloseFill, RiEyeFill } from "react-icons/ri";
 import useResizeObserver from "use-resize-observer";
 import { useUndoModelStore } from "../../model/UndoModel";
 import { editSlateState } from "../../model/utils/TextUtils";
-
-
-export const LAYER_COLOR_PALETTE = ["#1f78b4", "#ff7f00", "#33a02c", "#e31a1c", "#6a3d9a", "#a6cee3", "#b2df8a", "#fb9a99", "#fdbf6f", "#cab2d6", "#ffff99", "#b15928"];
-export let layerColorIndex = 0;
-
 
 
 function Input({ node }: { node: NodeApi<HiearchicalLayer> }) {

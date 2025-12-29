@@ -85,6 +85,9 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
         .map(c => c.translations?.final || '')
         .join('\n\n');
 
+    const goPrevChunk = () => setCurrentChunkIndex((idx) => Math.max(0, idx - 1));
+    const goNextChunk = () => setCurrentChunkIndex((idx) => Math.min(project.chunks.length - 1, idx + 1));
+
     const handleDownloadClick = () => {
         if (!resultText) {
             alert('No result to download yet.');
@@ -234,7 +237,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                     <Button
                                         size="sm"
                                         variant="flat"
-                                        onPress={() => setCurrentChunkIndex(Math.max(0, currentChunkIndex - 1))}
+                                        onPress={goPrevChunk}
                                         isDisabled={currentChunkIndex === 0}
                                     >
                                         Previous Chunk
@@ -245,7 +248,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                     <Button
                                         size="sm"
                                         variant="flat"
-                                        onPress={() => setCurrentChunkIndex(Math.min(project.chunks.length - 1, currentChunkIndex + 1))}
+                                        onPress={goNextChunk}
                                         isDisabled={currentChunkIndex === project.chunks.length - 1}
                                     >
                                         Next Chunk
@@ -279,7 +282,7 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                             </div>
                             <CardBody className="p-0 flex-1 overflow-hidden relative">
                                 {chunkNewValue ? (
-                                    <div className="h-full overflow-y-auto">
+                                    <div className="h-full overflow-y-auto flex flex-col">
                                         <ReactDiffViewer
                                             oldValue={chunkOldValue}
                                             newValue={chunkNewValue}
@@ -301,13 +304,31 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                                 }
                                             }}
                                         />
+                                        <div className="sticky bottom-0 w-full bg-white/90 dark:bg-gray-900/90 backdrop-blur border-t border-gray-200 dark:border-gray-700 px-4 py-3 mt-4 flex justify-end gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="flat"
+                                                onPress={goPrevChunk}
+                                                isDisabled={currentChunkIndex === 0}
+                                            >
+                                                Previous Chunk
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                color="primary"
+                                                onPress={goNextChunk}
+                                                isDisabled={currentChunkIndex === project.chunks.length - 1}
+                                            >
+                                                Next Chunk
+                                            </Button>
+                                        </div>
                                     </div>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                                    <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3">
                                         <p className="text-lg">No result for this chunk yet</p>
                                         <p className="text-sm">Run the agent to generate the formatted text</p>
                                         <Button
-                                            className="mt-3"
+                                            className="mt-1"
                                             color="primary"
                                             startContent={
                                                 isChunkRerunning
@@ -319,9 +340,29 @@ export const PublishProjectDetail: React.FC<PublishProjectDetailProps> = ({ proj
                                         >
                                             {isChunkRerunning ? 'Re-running chunk...' : 'Re-run just this chunk'}
                                         </Button>
-                                        <p className="text-xs text-gray-400 mt-2">
+                                        <p className="text-xs text-gray-400">
                                             Useful when some chunks returned empty output
                                         </p>
+                                        <div className="w-full max-w-md pt-2">
+                                            <div className="flex justify-end gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="flat"
+                                                    onPress={goPrevChunk}
+                                                    isDisabled={currentChunkIndex === 0}
+                                                >
+                                                    Previous Chunk
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    color="primary"
+                                                    onPress={goNextChunk}
+                                                    isDisabled={currentChunkIndex === project.chunks.length - 1}
+                                                >
+                                                    Next Chunk
+                                                </Button>
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                             </CardBody>

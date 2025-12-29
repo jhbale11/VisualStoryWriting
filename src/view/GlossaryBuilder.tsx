@@ -1,10 +1,9 @@
 import { Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Tab, Tabs, Textarea, Tooltip, useDisclosure, Select, SelectItem } from '@nextui-org/react';
-import { ReactFlowProvider, useKeyPress } from '@xyflow/react';
+import { useKeyPress } from '@xyflow/react';
 import React, { useEffect, useState } from 'react';
 import { FaDownload, FaSearch, FaTrashAlt, FaUpload, FaPlus } from 'react-icons/fa';
-import { FaLocationDot } from 'react-icons/fa6';
 import { FiFeather, FiTrash } from 'react-icons/fi';
-import { IoPersonCircle, IoSave } from 'react-icons/io5';
+import { IoSave } from 'react-icons/io5';
 import { TbArrowBigRightLinesFilled } from 'react-icons/tb';
 import { GlossaryCharacter, GlossaryTerm, useGlossaryStore, generateGlossaryString, restoreGlossarySnapshot, serializeGlossaryState } from '../model/GlossaryModel';
 import { LayoutUtils } from '../model/LayoutUtils';
@@ -25,9 +24,6 @@ function StoryFeaturesTab() {
 
   const updateStorySummary = useGlossaryStore((state) => state.updateStorySummary);
   const updateStyleGuide = useGlossaryStore((state) => state.updateStyleGuide);
-  const addArc = useGlossaryStore((state) => state.addArc);
-  const updateArc = useGlossaryStore((state) => state.updateArc);
-  const deleteArc = useGlossaryStore((state) => state.deleteArc);
   const addHonorific = useGlossaryStore((state) => state.addHonorific);
   const updateHonorific = useGlossaryStore((state) => state.updateHonorific);
   const deleteHonorific = useGlossaryStore((state) => state.deleteHonorific);
@@ -679,11 +675,9 @@ export default function GlossaryBuilder() {
     return localStorage.getItem('vsw.currentProjectId');
   });
   const previousProjectIdRef = React.useRef<string | null>(currentProjectId);
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'terms' | 'features' | 'arcs' | 'raw'>('characters');
+  const [glossaryTab, setGlossaryTab] = useState<'characters' | 'terms' | 'features' | 'arcs'>('characters');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedArcFilter, setSelectedArcFilter] = useState<string | null>(null);
-  const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<{ type: 'character' | 'event' | 'location' | 'term', item: any } | null>(null);
   const [editingTerm, setEditingTerm] = useState<{ id?: string; original: string; translation: string; context: string; category: string; notes: string } | null>(null);
   const escapePressed = useKeyPress(['Escape']);
@@ -693,7 +687,7 @@ export default function GlossaryBuilder() {
   const [compactData, setCompactData] = useState('');
   const [exportTab, setExportTab] = useState<'json' | 'compact'>('compact');
   const [topHeight, setTopHeight] = useState(70);
-  const [isDragging, setIsDragging] = useState(false);
+  const [isReconsolidating, setIsReconsolidating] = useState(false);
 
   // Download State
   const { isOpen: isDownloadModalOpen, onOpen: onDownloadModalOpen, onClose: onDownloadModalClose } = useDisclosure();
@@ -712,7 +706,6 @@ export default function GlossaryBuilder() {
   const convertToModelFormat = useGlossaryStore(state => state.convertToModelFormat);
   const exportToJSON = useGlossaryStore(state => state.exportToJSON);
   const importFromJSON = useGlossaryStore(state => state.importFromJSON);
-  const updateArc = useGlossaryStore(state => state.updateArc);
   const isGlossaryLoading = useGlossaryStore(state => state.isLoading);
   const processedChunks = useGlossaryStore(state => state.processedChunks);
   const totalChunks = useGlossaryStore(state => state.totalChunks);
@@ -733,7 +726,7 @@ export default function GlossaryBuilder() {
         }
 
         // Use name (+ korean_name if available) as unique key
-        const englishName = char.name.toLowerCase().trim();
+        const englishName = (char.name || '').toLowerCase().trim();
         const koreanName = (char.korean_name || '').toLowerCase().trim();
         const uniqueKey = koreanName ? `${englishName}|${koreanName}` : englishName;
 
@@ -1133,37 +1126,39 @@ export default function GlossaryBuilder() {
     }
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    e.preventDefault();
-  };
+  const handleReconsolidateFromRaw = async () => {
+    if (isReconsolidating) return;
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDragging) {
-        const container = document.getElementById('visual-container');
-        if (container) {
-          const containerRect = container.getBoundingClientRect();
-          const newHeight = ((e.clientY - containerRect.top) / containerRect.height) * 100;
-          setTopHeight(Math.max(30, Math.min(85, newHeight)));
-        }
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-    };
-
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
+    const state = useGlossaryStore.getState();
+    if (!state.raw_chunks || state.raw_chunks.length === 0) {
+      console.warn('No raw chunks available for reconsolidation');
+      return;
     }
 
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
+    // Prevent reconsolidation before all chunks finish to avoid partial results.
+    if ((state.totalChunks || 0) > 0 && (state.processedChunks || 0) < (state.totalChunks || 0)) {
+      console.warn('Re-consolidation blocked: chunks still processing');
+      return;
+    }
+
+    setIsReconsolidating(true);
+    try {
+      console.log('🔄 Re-consolidating from stored raw chunks (LLM-only, no re-extraction)...');
+          await state.consolidateResults();
+
+      const updatedArcs = useGlossaryStore.getState().arcs;
+      if (updatedArcs.length > 0) {
+        setSelectedArcFilter(updatedArcs[0].id);
+      }
+      setGlossaryTab('characters');
+
+      console.log('✅ Re-consolidation from raw chunks completed');
+    } catch (error) {
+      console.error('Failed to reconsolidate from raw chunks', error);
+    } finally {
+      setIsReconsolidating(false);
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -1343,7 +1338,6 @@ export default function GlossaryBuilder() {
                     const char = glossaryCharacters.find(c => c.id === charId);
                     if (char) {
                       setEditingItem({ type: 'character', item: char });
-                      setSelectedCharacterId(charId);
                     }
                   }}
                 />
@@ -1357,7 +1351,7 @@ export default function GlossaryBuilder() {
               <Button
                 style={{ position: 'absolute', right: 10, top: 10, fontSize: 18, zIndex: 100 }}
                 isIconOnly
-                onClick={(e) => {
+                onClick={() => {
                   LayoutUtils.stopAllSimulations();
                   useModelStore.getState().setActionEdges([]);
                   useModelStore.getState().setLocationNodes([]);
@@ -1390,6 +1384,40 @@ export default function GlossaryBuilder() {
               startContent={<FaSearch />}
               size="sm"
             />
+
+            <Card style={{ marginTop: '12px', background: '#f8fafc' }}>
+              <CardBody style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '12px', color: '#475569', fontWeight: 600 }}>
+                  Raw Chunk Status
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '12px', color: '#475569' }}>
+                  <Chip size="sm" variant="flat" color="secondary">
+                    Raw {rawChunks.length} chunks
+                  </Chip>
+                  <Chip size="sm" variant="flat" color="primary">
+                    Processed {processedChunks}/{totalChunks || '?'}
+                  </Chip>
+                </div>
+                <Button
+                  size="sm"
+                  color="secondary"
+                  variant="flat"
+                  startContent={<TbArrowBigRightLinesFilled />}
+                  isDisabled={
+                    isGlossaryLoading ||
+                    isReconsolidating ||
+                    rawChunks.length === 0 ||
+                    ((totalChunks || 0) > 0 && (processedChunks || 0) < (totalChunks || 0))
+                  }
+                  onPress={handleReconsolidateFromRaw}
+                >
+                  Re-consolidate from raw chunks (LLM)
+                </Button>
+                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                  모든 chunk 추출이 끝난 후 LLM 기반 consolidate만 다시 실행합니다. 재추출 없이 저장된 raw 데이터로만 갱신합니다.
+                </div>
+              </CardBody>
+            </Card>
 
             {/* Arc Filter */}
             {glossaryArcs.length > 0 && (
@@ -1449,14 +1477,6 @@ export default function GlossaryBuilder() {
                 Arcs ({glossaryArcs.length})
               </Chip>
               <Chip
-                onClick={() => setGlossaryTab('raw')}
-                color={glossaryTab === 'raw' ? 'secondary' : 'default'}
-                variant={glossaryTab === 'raw' ? 'solid' : 'bordered'}
-                style={{ cursor: 'pointer' }}
-              >
-                Raw Chunks ({rawChunks.length})
-              </Chip>
-              <Chip
                 onClick={() => setGlossaryTab('features')}
                 color={glossaryTab === 'features' ? 'secondary' : 'default'}
                 variant={glossaryTab === 'features' ? 'solid' : 'bordered'}
@@ -1499,7 +1519,11 @@ export default function GlossaryBuilder() {
                   </div>
                 ) : (
                   filteredCharacters
-                    .filter(char => char.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .filter(char => {
+                      const name = (char.name || '').toLowerCase();
+                      const query = (searchQuery || '').toLowerCase();
+                      return name.includes(query);
+                    })
                     .map((char) => (
                       <Card
                         key={char.id}
@@ -1551,7 +1575,7 @@ export default function GlossaryBuilder() {
                                 호칭/별명:
                               </div>
                               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                {Object.entries(char.name_variants).map(([key, value], idx) => (
+                                {Object.entries(char.name_variants).map(([, value], idx) => (
                                   <Chip key={idx} size="sm" variant="bordered" color="primary" style={{ fontSize: '11px' }}>
                                     {value}
                                   </Chip>
@@ -1673,10 +1697,12 @@ export default function GlossaryBuilder() {
                 )}
 
                 {glossaryTerms
-                  .filter(term =>
-                    term.original.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    term.translation.toLowerCase().includes(searchQuery.toLowerCase())
-                  )
+                  .filter(term => {
+                    const o = (term.original || '').toLowerCase();
+                    const t = (term.translation || '').toLowerCase();
+                    const q = (searchQuery || '').toLowerCase();
+                    return o.includes(q) || t.includes(q);
+                  })
                   .map((term) => (
                     <Card
                       key={term.id}
@@ -1882,67 +1908,6 @@ export default function GlossaryBuilder() {
             )}
 
             {glossaryTab === 'features' && <StoryFeaturesTab />}
-
-            {glossaryTab === 'raw' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {rawChunks.length === 0 ? (
-                  <div style={{
-                    padding: '40px 20px',
-                    textAlign: 'center',
-                    color: '#999',
-                    background: '#f9fafb',
-                    borderRadius: '12px'
-                  }}>
-                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🧩</div>
-                    <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px' }}>
-                      No Raw Chunk Extractions Yet
-                    </div>
-                    <div style={{ fontSize: '13px' }}>
-                      If extraction is running, open this tab again in a moment—raw chunks will stream in as they complete.
-                    </div>
-                  </div>
-                ) : (
-                  rawChunks
-                    .slice()
-                    .sort((a, b) => a.chunkIndex - b.chunkIndex)
-                    .map((rc) => (
-                      <Card key={`raw-${rc.chunkIndex}`} style={{ background: '#fff' }}>
-                        <CardHeader>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <div style={{ fontWeight: 'bold' }}>
-                              Chunk #{rc.chunkIndex + 1} <span style={{ color: '#888', fontWeight: 500 }}>({rc.model})</span>
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#666' }}>
-                              Extracted: {rc.extractedAt}
-                              {rc.parseError ? <span style={{ color: '#dc2626', marginLeft: '8px' }}>ParseError: {rc.parseError}</span> : null}
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <Divider />
-                        <CardBody>
-                          <Textarea
-                            label="Raw JSON (LLM output)"
-                            value={JSON.stringify(rc.raw ?? {}, null, 2)}
-                            minRows={6}
-                            size="sm"
-                            readOnly
-                          />
-                          {rc.rawText ? (
-                            <Textarea
-                              label="Raw Text (for debugging)"
-                              value={String(rc.rawText)}
-                              minRows={4}
-                              size="sm"
-                              readOnly
-                              className="mt-3"
-                            />
-                          ) : null}
-                        </CardBody>
-                      </Card>
-                    ))
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>
